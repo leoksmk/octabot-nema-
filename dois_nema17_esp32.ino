@@ -53,6 +53,11 @@ Movimento comandado = PARADO;
 unsigned long ultimoPasso = 0;
 bool nivelPasso = false;
 
+// ---------- Seguranca (dead-man switch) ----------
+// Se nao chegar comando de movimento dentro deste tempo, o carrinho para sozinho.
+const unsigned long TIMEOUT_MS = 500;
+unsigned long ultimoComando = 0;
+
 // ---------- Pagina de controle (o "app") ----------
 const char PAGINA[] PROGMEM = R"HTML(
 <!DOCTYPE html><html lang="pt-br"><head>
@@ -90,16 +95,24 @@ const char PAGINA[] PROGMEM = R"HTML(
 <script>
 function send(m){fetch('/cmd?m='+m).then(r=>r.text()).then(t=>{if(t)document.getElementById('v').textContent=t;});}
 // Segurar = anda; soltar = para. Funciona no toque e no mouse.
+// Enquanto o botao esta apertado, reenvia o comando (heartbeat) a cada 150ms.
+// Se soltar, ou travar, ou o WiFi cair, o ESP32 para sozinho pelo timeout.
+let hb=null;
+function parar(){if(hb){clearInterval(hb);hb=null;}send('p');}
 document.querySelectorAll('.pad button').forEach(b=>{
   const m=b.dataset.m;
-  const press=e=>{e.preventDefault();send(m);};
-  const release=e=>{e.preventDefault();if(m!=='p')send('p');};
+  const press=e=>{e.preventDefault();if(m==='p'){parar();return;}
+                  send(m);if(hb)clearInterval(hb);hb=setInterval(()=>send(m),150);};
+  const release=e=>{if(e)e.preventDefault();parar();};
   b.addEventListener('touchstart',press,{passive:false});
   b.addEventListener('touchend',release);
+  b.addEventListener('touchcancel',release);
   b.addEventListener('mousedown',press);
   b.addEventListener('mouseup',release);
   b.addEventListener('mouseleave',release);
 });
+// Se a aba perder o foco (trocou de app, bloqueou a tela), para na hora.
+document.addEventListener('visibilitychange',()=>{if(document.hidden)parar();});
 </script></body></html>
 )HTML";
 
@@ -109,10 +122,10 @@ void handleRaiz() { server.send_P(200, "text/html", PAGINA); }
 void handleCmd() {
   String m = server.arg("m");
   String resp = "";
-  if      (m == "f") comandado = FRENTE;
-  else if (m == "t") comandado = TRAS;
-  else if (m == "e") comandado = ESQUERDA;
-  else if (m == "d") comandado = DIREITA;
+  if      (m == "f") { comandado = FRENTE;   ultimoComando = millis(); }
+  else if (m == "t") { comandado = TRAS;     ultimoComando = millis(); }
+  else if (m == "e") { comandado = ESQUERDA; ultimoComando = millis(); }
+  else if (m == "d") { comandado = DIREITA;  ultimoComando = millis(); }
   else if (m == "p") comandado = PARADO;
   else if (m == "+") { if (intervaloCruzeiro > INTERVALO_MIN) intervaloCruzeiro -= 50; }
   else if (m == "-") { if (intervaloCruzeiro < INTERVALO_MAX) intervaloCruzeiro += 50; }
@@ -155,6 +168,11 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
+  // Dead-man switch: sem comando de movimento recente, para sozinho.
+  if (comandado != PARADO && millis() - ultimoComando > TIMEOUT_MS) {
+    comandado = PARADO;
+  }
 
   // Troca de estado com seguranca: nao inverte em velocidade.
   if (comandado != estado) {
