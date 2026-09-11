@@ -1,70 +1,121 @@
 /*
- * Controle de 2 motores NEMA 17 com ESP32 + 2 drivers A4988 (PCB vermelha).
+ * Carrinho com 2 motores NEMA 17 (tracao diferencial) - ESP32 + 2 A4988 (PCB vermelha).
+ * Controle por comando SERIAL, movimento continuo e nao-bloqueante.
  *
- * Ligacao tipica do A4988:
- *   VMOT  -> 12V (fonte dos motores) + capacitor 100uF entre VMOT e GND
- *   GND   -> GND da fonte E GND do ESP32 (terra comum e obrigatorio)
- *   VDD   -> 3.3V do ESP32 (logica)
- *   STEP  -> pino de passo do ESP32
- *   DIR   -> pino de direcao do ESP32
- *   EN    -> pino de enable (nivel BAIXO liga o driver)
- *   RESET -> ligado em SLEEP (para o driver funcionar)
- *   MS1/MS2/MS3 -> definem o microstepping (deixe sem ligar = passo cheio)
- *   1A/1B/2A/2B -> bobinas do motor NEMA 17
+ * Comandos (Serial Monitor a 115200, "Sem final de linha" ou Enter):
+ *   f ou w  -> frente
+ *   t ou s  -> tras (para tras)
+ *   e ou a  -> gira para a esquerda (no lugar)
+ *   d       -> gira para a direita (no lugar)
+ *   p ou x  -> parar
+ *   + / -   -> aumenta / diminui a velocidade
  *
- * IMPORTANTE: ajuste a corrente no potenciometro do A4988 antes de usar,
- * senao o motor esquenta ou perde passos.
+ * Ligacao do A4988 (cada driver):
+ *   VMOT -> 12V (fonte dos motores) + capacitor 100uF entre VMOT e GND
+ *   GND  -> GND da fonte E GND do ESP32 (terra comum obrigatorio!)
+ *   VDD  -> 3.3V do ESP32
+ *   STEP/DIR -> pinos abaixo
+ *   EN   -> pino EN (LOW = ligado)
+ *   RESET ligado no SLEEP; MS1/MS2/MS3 livres = passo cheio
+ *   1A/1B/2A/2B -> bobinas do NEMA 17
+ * Ajuste a corrente (Vref) no potenciometro antes de energizar.
  */
 
 // ---------- Pinos ----------
-// Motor 1
-const int M1_STEP = 26;
-const int M1_DIR  = 27;
+// Motor ESQUERDO
+const int L_STEP = 26;
+const int L_DIR  = 27;
+// Motor DIREITO
+const int R_STEP = 32;
+const int R_DIR  = 33;
+// Enable compartilhado (LOW = drivers ligados)
+const int EN_PIN = 25;
 
-// Motor 2
-const int M2_STEP = 32;
-const int M2_DIR  = 33;
+// ---------- Ajuste de sentido ----------
+// Se uma roda girar ao contrario do esperado, troque true<->false na dela.
+const bool L_INVERTE = false;
+const bool R_INVERTE = true;   // motor direito costuma ficar espelhado
 
-// Enable compartilhado pelos dois drivers (LOW = ligado)
-const int EN_PIN  = 25;
+// ---------- Velocidade ----------
+// Intervalo entre passos em microssegundos. MENOR = mais rapido.
+unsigned long intervaloPasso = 900;   // comece devagar; motor de passo trava se acelerar demais
+const unsigned long INTERVALO_MIN = 300;
+const unsigned long INTERVALO_MAX = 3000;
 
-// ---------- Parametros ----------
-const int PASSOS_POR_VOLTA = 200;   // NEMA 17 padrao: 1.8 graus = 200 passos
-const int PULSO_US = 800;           // largura do pulso em microssegundos (velocidade)
+// ---------- Estado ----------
+enum Movimento { PARADO, FRENTE, TRAS, ESQUERDA, DIREITA };
+Movimento estado = PARADO;
 
-void setup() {
-  pinMode(M1_STEP, OUTPUT);
-  pinMode(M1_DIR,  OUTPUT);
-  pinMode(M2_STEP, OUTPUT);
-  pinMode(M2_DIR,  OUTPUT);
-  pinMode(EN_PIN,  OUTPUT);
+unsigned long ultimoPasso = 0;
+bool nivelPasso = false;   // alterna HIGH/LOW dos pinos STEP
 
-  digitalWrite(EN_PIN, LOW);        // habilita os dois drivers
+void aplicarSentido() {
+  // Define DIR de cada motor conforme o movimento e as flags de inversao.
+  bool esquerdaFrente, direitaFrente;
+
+  switch (estado) {
+    case FRENTE:   esquerdaFrente = true;  direitaFrente = true;  break;
+    case TRAS:     esquerdaFrente = false; direitaFrente = false; break;
+    case ESQUERDA: esquerdaFrente = false; direitaFrente = true;  break; // gira no lugar
+    case DIREITA:  esquerdaFrente = true;  direitaFrente = false; break; // gira no lugar
+    default:       return; // PARADO: nao precisa de DIR
+  }
+
+  // "frente da roda" -> nivel do pino DIR (com inversao opcional)
+  digitalWrite(L_DIR, (esquerdaFrente ^ L_INVERTE) ? HIGH : LOW);
+  digitalWrite(R_DIR, (direitaFrente ^ R_INVERTE) ? HIGH : LOW);
 }
 
-// Gira os dois motores ao mesmo tempo, na mesma quantidade de passos.
-// sentido1 / sentido2: true = horario, false = anti-horario.
-void girar(int passos, bool sentido1, bool sentido2) {
-  digitalWrite(M1_DIR, sentido1 ? HIGH : LOW);
-  digitalWrite(M2_DIR, sentido2 ? HIGH : LOW);
+void setup() {
+  Serial.begin(115200);
 
-  for (int i = 0; i < passos; i++) {
-    digitalWrite(M1_STEP, HIGH);
-    digitalWrite(M2_STEP, HIGH);
-    delayMicroseconds(PULSO_US);
+  pinMode(L_STEP, OUTPUT);
+  pinMode(L_DIR,  OUTPUT);
+  pinMode(R_STEP, OUTPUT);
+  pinMode(R_DIR,  OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
 
-    digitalWrite(M1_STEP, LOW);
-    digitalWrite(M2_STEP, LOW);
-    delayMicroseconds(PULSO_US);
+  digitalWrite(EN_PIN, LOW);   // habilita os dois drivers
+
+  Serial.println("Carrinho NEMA17 pronto.");
+  Serial.println("Comandos: f/w frente | t/s tras | e/a esquerda | d direita | p parar | +/- velocidade");
+}
+
+void lerSerial() {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    switch (c) {
+      case 'f': case 'w': estado = FRENTE;   aplicarSentido(); Serial.println("FRENTE");   break;
+      case 't': case 's': estado = TRAS;     aplicarSentido(); Serial.println("TRAS");     break;
+      case 'e': case 'a': estado = ESQUERDA; aplicarSentido(); Serial.println("ESQUERDA"); break;
+      case 'd':           estado = DIREITA;  aplicarSentido(); Serial.println("DIREITA");  break;
+      case 'p': case 'x': estado = PARADO;   Serial.println("PARADO");   break;
+      case '+':
+        if (intervaloPasso > INTERVALO_MIN) intervaloPasso -= 100;
+        Serial.print("intervalo="); Serial.println(intervaloPasso);
+        break;
+      case '-':
+        if (intervaloPasso < INTERVALO_MAX) intervaloPasso += 100;
+        Serial.print("intervalo="); Serial.println(intervaloPasso);
+        break;
+      // ignora '\r' e '\n'
+    }
   }
 }
 
 void loop() {
-  // Uma volta completa com os dois motores no mesmo sentido
-  girar(PASSOS_POR_VOLTA, true, true);
-  delay(1000);
+  lerSerial();
 
-  // Uma volta completa em sentidos opostos
-  girar(PASSOS_POR_VOLTA, false, false);
-  delay(1000);
+  if (estado == PARADO) return;
+
+  // Gera pulsos de passo sem bloquear, para manter o serial responsivo.
+  unsigned long agora = micros();
+  if (agora - ultimoPasso >= intervaloPasso) {
+    ultimoPasso = agora;
+    nivelPasso = !nivelPasso;
+    int nivel = nivelPasso ? HIGH : LOW;
+    // Os dois motores dao o passo ao mesmo tempo.
+    digitalWrite(L_STEP, nivel);
+    digitalWrite(R_STEP, nivel);
+  }
 }
