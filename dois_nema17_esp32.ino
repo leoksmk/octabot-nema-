@@ -51,7 +51,7 @@ const unsigned long INTERVALO_MIN   = 350;  // teto de velocidade
 const unsigned long INTERVALO_MAX   = 2500; // piso de velocidade
 const unsigned long RAMPA_POR_PASSO = 8;    // suavidade da rampa
 
-unsigned long intervaloCruzeiro = 500;
+unsigned long intervaloCruzeiro = 1425; // = 50% do slider (map 0-100% -> MAX..MIN)
 unsigned long intervaloAtual    = INTERVALO_LENTO;
 
 // ---------- Estado ----------
@@ -84,9 +84,9 @@ const char PAGINA[] PROGMEM = R"HTML(
   button:active{background:#3b82f6}
   .up{grid-area:1/2}.left{grid-area:2/1}.stop{grid-area:2/2;background:#7f1d1d;font-size:1rem}
   .right{grid-area:2/3}.down{grid-area:3/2}
-  .vel{display:flex;align-items:center;gap:14px}
-  .vel button{width:64px;height:56px;font-size:1.4rem;border-radius:12px}
-  #v{min-width:120px;text-align:center;font-variant-numeric:tabular-nums;opacity:.85}
+  .vel{display:flex;flex-direction:column;align-items:center;gap:8px;width:min(86vw,320px)}
+  .vel label{font-size:.9rem;opacity:.85;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;height:36px;accent-color:#3b82f6;touch-action:none}
 </style></head><body>
 <h1>Carrinho NEMA17</h1>
 <div class="pad">
@@ -97,12 +97,17 @@ const char PAGINA[] PROGMEM = R"HTML(
   <button class="down"  data-m="t">&#9660;</button>
 </div>
 <div class="vel">
-  <button onclick="send('-')">&minus;</button>
-  <span id="v">velocidade</span>
-  <button onclick="send('+')">&plus;</button>
+  <label>Velocidade: <span id="v">50</span>%</label>
+  <input id="s" type="range" min="0" max="100" value="50">
 </div>
 <script>
-function send(m){fetch('/cmd?m='+m).then(r=>r.text()).then(t=>{if(t)document.getElementById('v').textContent=t;});}
+function send(m){fetch('/cmd?m='+m);}
+// Slider de velocidade: envia o valor (0-100%) enquanto arrasta.
+const sl=document.getElementById('s');
+sl.addEventListener('input',()=>{
+  document.getElementById('v').textContent=sl.value;
+  fetch('/cmd?m=v&val='+sl.value);
+});
 // Segurar = anda; soltar = para. Funciona no toque e no mouse.
 // Enquanto o botao esta apertado, reenvia o comando (heartbeat) a cada 150ms.
 // Se soltar, ou travar, ou o WiFi cair, o ESP32 para sozinho pelo timeout.
@@ -130,21 +135,17 @@ void handleRaiz() { server.send_P(200, "text/html", PAGINA); }
 
 void handleCmd() {
   String m = server.arg("m");
-  String resp = "";
   if      (m == "f") { comandado = FRENTE;   ultimoComando = millis(); }
   else if (m == "t") { comandado = TRAS;     ultimoComando = millis(); }
   else if (m == "e") { comandado = ESQUERDA; ultimoComando = millis(); }
   else if (m == "d") { comandado = DIREITA;  ultimoComando = millis(); }
   else if (m == "p") comandado = PARADO;
-  else if (m == "+") { if (intervaloCruzeiro > INTERVALO_MIN) intervaloCruzeiro -= 50; }
-  else if (m == "-") { if (intervaloCruzeiro < INTERVALO_MAX) intervaloCruzeiro += 50; }
-
-  if (m == "+" || m == "-") {
-    // devolve um valor legivel (0-100%) so pra mostrar na tela
-    int pct = map(intervaloCruzeiro, INTERVALO_MAX, INTERVALO_MIN, 0, 100);
-    resp = "vel: " + String(pct) + "%";
+  else if (m == "v") {
+    // Slider: val = 0..100 (%). 0% = mais lento, 100% = mais rapido.
+    int pct = constrain(server.arg("val").toInt(), 0, 100);
+    intervaloCruzeiro = map(pct, 0, 100, INTERVALO_MAX, INTERVALO_MIN);
   }
-  server.send(200, "text/plain", resp);
+  server.send(200, "text/plain", "");
 }
 
 // ---------- Motores ----------

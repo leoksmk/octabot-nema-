@@ -105,9 +105,10 @@ perde passo ou queima.
    | ◀ | Gira à esquerda (no eixo) |
    | ▶ | Gira à direita (no eixo) |
    | STOP | Para na hora |
-   | − / + | Diminui / aumenta a velocidade |
+   | Slider | Velocidade de 0 a 100% (arraste para ajustar em tempo real) |
 
 3. **Segure o botão pra andar; solte pra parar.** "Adicionar à tela inicial" cria um ícone de app.
+   O **slider de velocidade** vale imediatamente para o próximo movimento (respeitando a rampa).
 
 ### Segurança automática (dead-man switch)
 A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receber comando**
