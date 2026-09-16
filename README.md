@@ -39,6 +39,21 @@ Ou seja: você só encaixa o ESP32 e os 2 DRV8825, liga os motores em X3/X1 e al
 > **O EN é separado por driver** nesta placa (não é compartilhado). O código habilita os
 > dois (nível `LOW`) no `setup()`.
 
+### Servos (gimbal pan/tilt)
+
+| Eixo | Conector da placa | Sinal |
+|------|:-----------------:|:-----:|
+| Pan (horizontal) | **U3** | GPIO **15** |
+| Tilt (vertical)  | **U4** | GPIO **4**  |
+
+> Sobra o conector **U1 (GPIO2)** livre para um 3º servo, mas evitei usá-lo: GPIO2 é
+> strapping delicado (LED onboard) e pode atrapalhar o boot. **U5 (GPIO5)** é a saída de
+> fita de LED — não usada por este firmware.
+>
+> Os servos são alimentados pelo **5V** da placa (J1). Dois micro servos (SG90) o 5V do
+> ESP32 até aguenta, mas servos maiores (MG996R) puxam picos de corrente — nesse caso
+> alimente o 5V por uma fonte dedicada, senão o ESP32 pode resetar no meio do movimento.
+
 > **Qual é "esquerdo" e qual é "direito"?** É só uma convenção do código. Se ao mandar
 > "frente" o carrinho virar, veja a seção 6 (inverter sentido) ou troque os motores de
 > conector (X3 ⇄ X1).
@@ -91,8 +106,10 @@ perde passo ou queima.
 
 ### Gravar
 1. Instale o suporte **ESP32** na Arduino IDE (Boards Manager → "esp32" by Espressif).
-2. Selecione **ESP32 Dev Module** e a porta COM.
-3. Abra `dois_nema17_esp32.ino` e clique em **Upload**. Só usa `WiFi.h` e `WebServer.h` (nativas).
+2. Instale a biblioteca **ESP32Servo** (Library Manager → procure "ESP32Servo", by Kevin Harrington)
+   — necessária para os servos do gimbal. `WiFi.h` e `WebServer.h` já são nativas.
+3. Selecione **ESP32 Dev Module** e a porta COM.
+4. Abra `dois_nema17_esp32.ino` e clique em **Upload**.
 
 ### Usar o app
 1. No celular, conecte no WiFi: rede **`Carrinho-NEMA`**, senha **`12345678`**.
@@ -109,6 +126,11 @@ perde passo ou queima.
 
 3. **Segure o botão pra andar; solte pra parar.** "Adicionar à tela inicial" cria um ícone de app.
    O **slider de velocidade** vale imediatamente para o próximo movimento (respeitando a rampa).
+4. **Gimbal (joystick):** arraste o círculo azul para mirar. É **posição absoluta** — o servo
+   **segura** onde você soltar (não recentraliza, como convém a uma câmera). O botão
+   **Centralizar** volta os dois eixos para 90°. Se um eixo se mover ao contrário, troque
+   `PAN_INVERTE` / `TILT_INVERTE` no código. O gimbal é independente do corte de segurança do
+   carrinho (os servos mantêm a posição mesmo sem comando).
 
 ### Segurança automática (dead-man switch)
 A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receber comando**
@@ -128,6 +150,8 @@ A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receb
 | `intervaloCruzeiro` | 500 µs | Velocidade alvo ao andar (ajustável ao vivo com −/+). |
 | `TIMEOUT_MS` | 500 ms | Tempo sem comando até parar sozinho. WiFi ruim? Aumente p/ 800-1000. |
 | `L_INVERTE` / `R_INVERTE` | false / true | Inverte o sentido de uma roda se ela girar ao contrário. |
+| `PAN_INVERTE` / `TILT_INVERTE` | false / false | Inverte o eixo do gimbal se mexer ao contrário. |
+| `SERVO_PAN_PIN` / `SERVO_TILT_PIN` | 15 / 4 | GPIOs dos servos (U3 / U4). |
 | `AP_SSID` / `AP_PASS` | Carrinho-NEMA / 12345678 | Nome e senha da rede WiFi criada. |
 
 ---
@@ -157,4 +181,5 @@ A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receb
 - **Curva é só no eixo (tank).** Não faz curva em arco andando.
 - **Não foi testado em hardware neste ambiente.** Os pinos vêm do esquemático (corretos),
   mas os parâmetros de velocidade/rampa e o Vref devem ser calibrados no primeiro teste.
-- **As saídas U1/U3/U4/U5** (servos e LED) da placa **não** são usadas por este firmware.
+- **Gimbal usa U3 (pan) e U4 (tilt).** Sobram **U1** (3º servo) e **U5** (fita de LED), não
+  usados por este firmware.

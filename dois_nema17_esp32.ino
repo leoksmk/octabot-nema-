@@ -22,6 +22,7 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESP32Servo.h>   // instale pelo Library Manager: "ESP32Servo" (Kevin Harrington)
 
 // ---------- WiFi (o ESP32 cria a propria rede) ----------
 const char* AP_SSID = "Carrinho-NEMA";
@@ -39,6 +40,16 @@ const int R_DIR  = 14;   // PIN14
 const int R_EN   = 12;   // PIN12  (LOW = driver ligado) -- GPIO12 e strapping, ver nota no README
 // Obs.: nesta placa cada driver tem seu proprio EN (nao e compartilhado).
 // SLEEP e RESET ja vao no VCC por hardware; M0/M1/M2 livres = passo cheio (200 passos/volta).
+
+// ---------- Servos (gimbal pan/tilt) ----------
+// Conectores de servo da placa: U3=GPIO15, U1=GPIO2, U4=GPIO4.
+// Usamos U3 e U4 (mais seguros no boot; U1/GPIO2 evitado por ser strapping delicado).
+const int SERVO_PAN_PIN  = 15;  // U3  -> movimento horizontal
+const int SERVO_TILT_PIN = 4;   // U4  -> movimento vertical
+const bool PAN_INVERTE  = false; // troque se o eixo girar ao contrario
+const bool TILT_INVERTE = false;
+Servo servoPan, servoTilt;
+int panAng = 90, tiltAng = 90;   // posicao atual (o gimbal segura onde parar)
 
 // ---------- Ajuste de sentido ----------
 // Se uma roda girar ao contrario, troque true<->false na dela.
@@ -76,7 +87,8 @@ const char PAGINA[] PROGMEM = R"HTML(
   :root{color-scheme:dark}
   *{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:system-ui,sans-serif;background:#111;color:#eee;
-       display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:18px}
+       display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+       min-height:100vh;gap:16px;padding:18px 0 28px}
   h1{font-size:1.1rem;font-weight:600;margin:0;opacity:.8}
   .pad{display:grid;grid-template-columns:repeat(3,86px);grid-template-rows:repeat(3,86px);gap:12px}
   button{border:0;border-radius:16px;background:#2a2a2a;color:#eee;font-size:1.6rem;
@@ -87,6 +99,14 @@ const char PAGINA[] PROGMEM = R"HTML(
   .vel{display:flex;flex-direction:column;align-items:center;gap:8px;width:min(86vw,320px)}
   .vel label{font-size:.9rem;opacity:.85;font-variant-numeric:tabular-nums}
   input[type=range]{width:100%;height:36px;accent-color:#3b82f6;touch-action:none}
+  hr{width:min(86vw,320px);border:0;border-top:1px solid #333;margin:4px 0}
+  .sub{font-size:.85rem;opacity:.6;margin:0}
+  .joy{position:relative;width:200px;height:200px;border-radius:50%;
+       background:radial-gradient(circle,#242424 0%,#1a1a1a 70%);border:1px solid #333;touch-action:none}
+  .knob{position:absolute;left:50%;top:50%;width:64px;height:64px;border-radius:50%;
+        background:#3b82f6;transform:translate(-50%,-50%);transition:background .05s}
+  .knob:active{background:#2563eb}
+  .ctr{border:0;border-radius:12px;background:#2a2a2a;color:#eee;font-size:.9rem;padding:10px 18px}
 </style></head><body>
 <h1>Carrinho NEMA17</h1>
 <div class="pad">
@@ -100,6 +120,10 @@ const char PAGINA[] PROGMEM = R"HTML(
   <label>Velocidade: <span id="v">50</span>%</label>
   <input id="s" type="range" min="0" max="100" value="50">
 </div>
+<hr>
+<p class="sub">Gimbal (pan / tilt)</p>
+<div class="joy" id="joy"><div class="knob" id="knob"></div></div>
+<button class="ctr" id="ctr">Centralizar</button>
 <script>
 function send(m){fetch('/cmd?m='+m);}
 // Slider de velocidade: envia o valor (0-100%) enquanto arrasta.
@@ -107,6 +131,37 @@ const sl=document.getElementById('s');
 sl.addEventListener('input',()=>{
   document.getElementById('v').textContent=sl.value;
   fetch('/cmd?m=v&val='+sl.value);
+});
+
+// ---- Joystick do gimbal (posicao absoluta; o servo segura onde soltar) ----
+const joy=document.getElementById('joy'), knob=document.getElementById('knob');
+let jr=0, arrastando=false, ultimoEnvio=0;
+function moverKnob(nx,ny){ // nx,ny em -1..1
+  knob.style.left=(50+nx*50)+'%';
+  knob.style.top =(50+ny*50)+'%';
+}
+function enviarGimbal(nx,ny){
+  const agora=Date.now();
+  if(agora-ultimoEnvio<60) return;   // limita a ~16 envios/s
+  ultimoEnvio=agora;
+  const pan =Math.round((nx+1)*90);  // -1..1 -> 0..180
+  const tilt=Math.round((1-ny)*90);  // para cima = tilt maior
+  fetch('/gimbal?p='+pan+'&t='+tilt);
+}
+function pos(e){
+  const r=joy.getBoundingClientRect();
+  jr=r.width/2;
+  let dx=(e.clientX-(r.left+jr))/jr;
+  let dy=(e.clientY-(r.top +jr))/jr;
+  const d=Math.hypot(dx,dy);
+  if(d>1){dx/=d;dy/=d;}              // prende dentro do circulo
+  moverKnob(dx,dy); enviarGimbal(dx,dy);
+}
+joy.addEventListener('pointerdown',e=>{arrastando=true;joy.setPointerCapture(e.pointerId);pos(e);});
+joy.addEventListener('pointermove',e=>{if(arrastando)pos(e);});
+joy.addEventListener('pointerup',()=>{arrastando=false;}); // NAO recentraliza: gimbal segura
+document.getElementById('ctr').addEventListener('click',()=>{
+  moverKnob(0,0); ultimoEnvio=0; fetch('/gimbal?p=90&t=90');
 });
 // Segurar = anda; soltar = para. Funciona no toque e no mouse.
 // Enquanto o botao esta apertado, reenvia o comando (heartbeat) a cada 150ms.
@@ -148,6 +203,21 @@ void handleCmd() {
   server.send(200, "text/plain", "");
 }
 
+// Gimbal: recebe angulos absolutos p (pan) e t (tilt), 0..180. O servo segura a posicao.
+void handleGimbal() {
+  if (server.hasArg("p")) {
+    int a = constrain(server.arg("p").toInt(), 0, 180);
+    panAng = PAN_INVERTE ? 180 - a : a;
+    servoPan.write(panAng);
+  }
+  if (server.hasArg("t")) {
+    int a = constrain(server.arg("t").toInt(), 0, 180);
+    tiltAng = TILT_INVERTE ? 180 - a : a;
+    servoTilt.write(tiltAng);
+  }
+  server.send(200, "text/plain", "");
+}
+
 // ---------- Motores ----------
 void aplicarSentido(Movimento mv) {
   bool esq, dir;
@@ -169,11 +239,24 @@ void setup() {
   digitalWrite(L_EN, LOW); // habilita driver DRV3
   digitalWrite(R_EN, LOW); // habilita driver DRV1
 
+  // Servos do gimbal (ESP32Servo usa os timers LEDC).
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  servoPan.setPeriodHertz(50);
+  servoTilt.setPeriodHertz(50);
+  servoPan.attach(SERVO_PAN_PIN, 500, 2500);
+  servoTilt.attach(SERVO_TILT_PIN, 500, 2500);
+  servoPan.write(panAng);
+  servoTilt.write(tiltAng);
+
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);
 
   server.on("/", handleRaiz);
   server.on("/cmd", handleCmd);
+  server.on("/gimbal", handleGimbal);
   server.begin();
 }
 
