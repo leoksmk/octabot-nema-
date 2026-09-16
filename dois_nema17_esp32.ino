@@ -1,5 +1,6 @@
 /*
- * Carrinho 2x NEMA 17 (tracao diferencial) - ESP32 + 2 A4988 (PCB vermelha).
+ * Carrinho 2x NEMA 17 (tracao diferencial) - Mainboard Future Makers 2k26
+ * ESP32 DevKit v1 (30 pinos) + 2 drivers DRV8825.
  * Controle SEM FIO por uma pagina web servida pelo proprio ESP32 (o "app").
  * Movimento nao-bloqueante com RAMPA de aceleracao/desaceleracao. Curva estilo TANK.
  *
@@ -10,12 +11,13 @@
  *   4. Segure os botoes pra andar; solte pra parar. +/- muda a velocidade.
  *      (No celular: menu do navegador > "Adicionar a tela inicial" = vira icone de app)
  *
- * Ligacao do A4988 (cada driver):
- *   VMOT -> 12V + capacitor 100uF entre VMOT e GND
- *   GND  -> GND da fonte E GND do ESP32 (terra comum obrigatorio!)
- *   VDD  -> 3.3V do ESP32 | STEP/DIR -> pinos abaixo | EN -> LOW liga
- *   RESET ligado no SLEEP; MS1/MS2/MS3 livres = passo cheio
- * Ajuste a corrente (Vref) no potenciometro antes de energizar.
+ * Esta placa (ver esquematico) ja resolve por hardware:
+ *   - VMOT de cada driver -> 12V, com capacitor (C3/C4)
+ *   - SLEEP e RESET -> VCC (drivers sempre ativos)
+ *   - M0/M1/M2 livres -> passo cheio (200 passos/volta)
+ *   - Motores nos conectores X3 (DRV3) e X1 (DRV1); alimentacao em J1(5V) e J2(12V)
+ * Ajuste a corrente (Vref) no potenciometro de cada DRV8825 antes de energizar
+ *   (DRV8825: corrente_limite ~= Vref x 2 com Rsense 0.1ohm; ex.: 1A -> Vref ~0.5V).
  */
 
 #include <WiFi.h>
@@ -26,10 +28,17 @@ const char* AP_SSID = "Carrinho-NEMA";
 const char* AP_PASS = "12345678";   // minimo 8 caracteres
 WebServer server(80);
 
-// ---------- Pinos ----------
-const int L_STEP = 26, L_DIR = 27;   // motor ESQUERDO
-const int R_STEP = 32, R_DIR = 33;   // motor DIREITO
-const int EN_PIN = 25;               // enable compartilhado (LOW = ligado)
+// ---------- Pinos (conforme esquematico Mainboard Future Makers 2k26) ----------
+// Motor ESQUERDO  = driver DRV3, conector de motor X3
+const int L_STEP = 25;   // PIN25
+const int L_DIR  = 33;   // PIN33
+const int L_EN   = 26;   // PIN26  (LOW = driver ligado)
+// Motor DIREITO   = driver DRV1, conector de motor X1
+const int R_STEP = 27;   // PIN27
+const int R_DIR  = 14;   // PIN14
+const int R_EN   = 12;   // PIN12  (LOW = driver ligado) -- GPIO12 e strapping, ver nota no README
+// Obs.: nesta placa cada driver tem seu proprio EN (nao e compartilhado).
+// SLEEP e RESET ja vao no VCC por hardware; M0/M1/M2 livres = passo cheio (200 passos/volta).
 
 // ---------- Ajuste de sentido ----------
 // Se uma roda girar ao contrario, troque true<->false na dela.
@@ -155,8 +164,9 @@ void aplicarSentido(Movimento mv) {
 void setup() {
   pinMode(L_STEP, OUTPUT); pinMode(L_DIR, OUTPUT);
   pinMode(R_STEP, OUTPUT); pinMode(R_DIR, OUTPUT);
-  pinMode(EN_PIN, OUTPUT);
-  digitalWrite(EN_PIN, LOW);
+  pinMode(L_EN, OUTPUT);   pinMode(R_EN, OUTPUT);
+  digitalWrite(L_EN, LOW); // habilita driver DRV3
+  digitalWrite(R_EN, LOW); // habilita driver DRV1
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);
