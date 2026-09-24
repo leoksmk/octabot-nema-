@@ -219,6 +219,13 @@ void handleGimbal() {
 }
 
 // ---------- Motores ----------
+// Liga/desliga os dois drivers (EN ativo em nivel baixo).
+// Desligar quando parado evita que os motores fiquem puxando corrente (e esquentando) a toa.
+void drivers(bool ligado) {
+  digitalWrite(L_EN, ligado ? LOW : HIGH);
+  digitalWrite(R_EN, ligado ? LOW : HIGH);
+}
+
 void aplicarSentido(Movimento mv) {
   bool esq, dir;
   switch (mv) {
@@ -236,8 +243,7 @@ void setup() {
   pinMode(L_STEP, OUTPUT); pinMode(L_DIR, OUTPUT);
   pinMode(R_STEP, OUTPUT); pinMode(R_DIR, OUTPUT);
   pinMode(L_EN, OUTPUT);   pinMode(R_EN, OUTPUT);
-  digitalWrite(L_EN, LOW); // habilita driver DRV3
-  digitalWrite(R_EN, LOW); // habilita driver DRV1
+  drivers(false);          // comeca DESLIGADO (parado nao segura corrente = menos calor)
 
   // Servos do gimbal (ESP32Servo usa os timers LEDC).
   ESP32PWM::allocateTimer(0);
@@ -271,6 +277,7 @@ void loop() {
   // Troca de estado com seguranca: nao inverte em velocidade.
   if (comandado != estado) {
     if (estado == PARADO) {
+      drivers(true);            // religa os drivers ao sair do repouso
       estado = comandado;
       aplicarSentido(estado);
       intervaloAtual = INTERVALO_LENTO;
@@ -300,7 +307,7 @@ void loop() {
         if (intervaloAtual > alvo) intervaloAtual = alvo;
       }
       if (freando && intervaloAtual >= INTERVALO_LENTO) {
-        if (comandado == PARADO) estado = PARADO;
+        if (comandado == PARADO) { estado = PARADO; drivers(false); } // desliga ao parar de vez
         else { estado = comandado; aplicarSentido(estado); }
       }
     }
