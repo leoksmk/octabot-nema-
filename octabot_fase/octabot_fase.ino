@@ -71,8 +71,8 @@ unsigned long intervaloAtual    = INTERVALO_LENTO;
 
 // ---------- Transmissao e fase ----------
 const long PASSOS_MOTOR  = 200; // passo cheio (M0/M1/M2 livres)
-const long DENTES_PINHAO = 6;   // engrenagem no eixo do motor
-const long DENTES_COROA  = 20;  // engrenagem da manivela
+const long DENTES_PINHAO = 6;   // engrenagem PRETA, no eixo do motor
+const long DENTES_COROA  = 20;  // engrenagens CINZAS (manivelas da frente e de tras)
 const long UNID_VOLTA = PASSOS_MOTOR * DENTES_COROA; // 4000 unidades = 1 volta da manivela
 const long UNID_PASSO = DENTES_PINHAO;               // 6 unidades = 1 passo do motor (0,54 graus)
 

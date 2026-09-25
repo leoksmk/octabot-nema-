@@ -37,10 +37,17 @@ Um contador de passos inteiro acumularia erro a cada volta. Por isso o código c
 **unidades**: 1 volta = 200 × 20 = **4000 unidades** e 1 passo = **6 unidades**. A conta
 fica exata para sempre, e o erro residual de uma correção é de no máximo 0,27°.
 
-> ⚠️ O commit anterior fala em redução de **6,67:1**, mas 20/6 = **3,33:1**. Se existir
-> outro estágio de engrenagens, ajuste `DENTES_PINHAO` e `DENTES_COROA` para a razão
-> total. Se não existir, as velocidades daquele commit foram escolhidas com uma premissa
-> errada e merecem ser recalibradas.
+Confirmado pelo montador e pelo vídeo: em cada lado, o **pinhão preto de 6 dentes** fica no
+eixo do motor, entre as duas **engrenagens cinzas de 20 dentes** (a da perna da frente e a
+da perna de trás), e move as duas. As cinzas giram no mesmo sentido e na mesma velocidade.
+Por isso os 90° entre a perna da frente e a de trás dependem só de como os dentes das cinzas
+foram encaixados no pinhão.
+
+> ⚠️ Um commit anterior (`25c1644`) fala em redução de **6,67:1**. O valor real é
+> 20/6 = **3,33:1**. As velocidades daquele commit (`INTERVALO_MIN = 150`) foram escolhidas
+> achando que havia o dobro de redução, ou seja, o dobro de torque na manivela. Se o motor
+> perder passo em velocidade alta, suba `INTERVALO_MIN`. Neste firmware, perder passo também
+> estraga a fase.
 
 ### O que cada movimento faz com a fase
 
