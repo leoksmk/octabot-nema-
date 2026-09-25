@@ -57,12 +57,12 @@ const bool L_INVERTE = false;
 const bool R_INVERTE = true;
 
 // ---------- Velocidade e rampa (intervalo entre passos em us; MENOR = mais rapido) ----------
-const unsigned long INTERVALO_LENTO = 2000; // largada / parada
-const unsigned long INTERVALO_MIN   = 350;  // teto de velocidade
+const unsigned long INTERVALO_LENTO = 1500; // largada / parada
+const unsigned long INTERVALO_MIN   = 200;  // teto de velocidade (menor = mais rapido; se travar/chiar, suba p/ 250-300)
 const unsigned long INTERVALO_MAX   = 2500; // piso de velocidade
-const unsigned long RAMPA_POR_PASSO = 8;    // suavidade da rampa
+const unsigned long RAMPA_POR_PASSO = 15;   // acelera mais rapido (maior = chega na velocidade antes)
 
-unsigned long intervaloCruzeiro = 1425; // = 50% do slider (map 0-100% -> MAX..MIN)
+unsigned long intervaloCruzeiro = 1350; // = 50% do slider (map 0-100% -> MAX..MIN)
 unsigned long intervaloAtual    = INTERVALO_LENTO;
 
 // ---------- Estado ----------
