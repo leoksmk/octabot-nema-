@@ -8,7 +8,8 @@
  *   Controle inclinado p/ lados  -> so gira no proprio eixo (estilo tank)
  *   Velocidade proporcional a inclinacao. Rampa de aceleracao/desaceleracao.
  *
- * Sem app/WiFi/gimbal: e o firmware "normal" (sem cinematica de fase) trocado para ESP-NOW.
+ * Sem app web/pagina HTML e sem gimbal: e o firmware "normal" (sem cinematica de fase)
+ * trocado para ESP-NOW. O WiFi.h continua so porque o ESP-NOW usa o radio do WiFi.
  * Seguranca: se nao chegar pacote do controle em TIMEOUT_MS, freia e para sozinho.
  */
 
