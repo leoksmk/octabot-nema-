@@ -83,12 +83,52 @@ você ajustar os valores.
 | `HISTERESE_EIXO` | 15 | Margem para trocar entre andar e girar |
 | `TIMEOUT_MS` | 300 ms | Tempo sem pacote até parar |
 | `L_INVERTE` / `R_INVERTE` | false / true | Sentido de cada roda |
+| `MICROPASSO` | 1 | Tem que bater com os jumpers M0/M1/M2 do DRV8825 (ver seção 5) |
 
 `MAGICO` e `CANAL_WIFI` precisam ser **iguais nos dois códigos**. Se houver outro
 carrinho com este firmware por perto, troque o `MAGICO` para que um controle não
 comande o robô do outro.
 
-## 5. Limitações
+## 5. Barulho, ressonância e micropasso
+
+Os problemas de motor encontrados no `octabot_fase` também valem aqui, porque a rampa e o
+passo cheio vieram do mesmo código original.
+
+- **Ressonância na faixa média.** Em passo cheio, cada passo de 1,8° dá um tranco. Por volta
+  de **~380 passos/s**, o que aqui dá mais ou menos **metade da inclinação**, o NEMA 17
+  vibra, faz barulho e perde passo com facilidade. Como a velocidade é proporcional à
+  inclinação, o robô passa por essa faixa toda vez que acelera.
+- **A 100% o motor pode estar perdendo passo.** Se ele ficar silencioso a 100%, pode ser
+  sinal de que não está acompanhando. Teste: com o controle bem inclinado, o robô anda
+  visivelmente mais rápido do que com ~75%? Se não andar, suba `INTERVALO_MIN` para ~300.
+  Aqui perder passo não estraga fase nenhuma (esta versão não rastreia fase), mas o robô
+  perde força e velocidade.
+- **Bug corrigido: largada mais rápida que o cruzeiro.** Com pouca inclinação, abaixo de
+  ~55%, o robô largava a `INTERVALO_LENTO` (1200 µs) e depois *desacelerava* até o cruzeiro
+  (até 2500 µs), um tranco à toa. Agora a largada e a parada usam o mais lento entre os dois.
+
+**A correção de verdade é o micropasso.** Ele divide cada passo de 1,8° em passos menores,
+e o movimento fica suave e bem mais silencioso. Precisa de hardware, porque nesta placa os
+pinos M0/M1/M2 do DRV8825 estão soltos:
+
+1. **Com tudo desligado**, ligue o pino **M1** de cada módulo DRV8825 ao VCC lógico. O pino
+   **RST** do próprio módulo já está no VCC nesta placa (é o 2º abaixo do M1), então um fio
+   fino soldado entre M1 e RST resolve.
+   ⚠️ Confira antes, com o multímetro, que o RST está em 3,3/5 V e **não em 12 V**. O VMOT
+   fica do outro lado do módulo. Se M0/M1/M2 estiverem ligados a alguma trilha na placa,
+   esse fio pode dar curto, então confira isso também.
+2. No `carrinho_espnow.ino`, mude `MICROPASSO` para **4**. As velocidades e a rampa
+   continuam iguais em rpm, porque o código compensa sozinho.
+
+Tabela do DRV8825 (M2 M1 M0): `000` cheio · `001` 1/2 · `010` **1/4** · `011` 1/8.
+
+**Sem mexer no hardware:** baixar um pouco o Vref também reduz o ruído, mas perde torque.
+
+Simulado no PC (MICROPASSO 1 e 4, inclinação de 10 a 100%): a largada nunca fica mais
+rápida que o cruzeiro, a frenagem, a inversão de sentido e o timeout continuam funcionando
+e, a 100% com 1/4, o pulso fica em 37 µs. Não foi testado no robô.
+
+## 6. Limitações
 
 - **Não foi compilado nem testado em hardware neste ambiente.** Passou só por uma checagem
   de sintaxe com headers simulados. O primeiro teste deve ser feito com as rodas no ar.
