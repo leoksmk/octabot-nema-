@@ -11,6 +11,9 @@ Feito para a placa **Mainboard Future Makers 2k26** (MYND): ESP32 DevKit v1 (30 
 
 Código-fonte: [`dois_nema17_esp32.ino`](dois_nema17_esp32.ino)
 
+> **Outras versões:** [`octabot_fase/`](octabot_fase/) (sincronia de fase das pernas) e
+> [`octabot_espnow/`](octabot_espnow/) (controle por inclinação com MPU6050 via ESP-NOW, sem app).
+
 ---
 
 ## 1. O que a placa já resolve por você
