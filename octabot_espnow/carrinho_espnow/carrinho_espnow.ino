@@ -8,7 +8,8 @@
  *   Controle inclinado p/ lados  -> so gira no proprio eixo (estilo tank)
  *   Velocidade proporcional a inclinacao. Rampa de aceleracao/desaceleracao.
  *
- * Sem app/WiFi/gimbal: e o firmware "normal" (sem cinematica de fase) trocado para ESP-NOW.
+ * Sem app web/pagina HTML e sem gimbal: e o firmware "normal" (sem cinematica de fase)
+ * trocado para ESP-NOW. O WiFi.h continua so porque o ESP-NOW usa o radio do WiFi.
  * Seguranca: se nao chegar pacote do controle em TIMEOUT_MS, freia e para sozinho.
  */
 
@@ -47,6 +48,14 @@ const unsigned long INTERVALO_MAX   = 2500; // inclinacao minima fora da zona mo
 const unsigned long RAMPA_POR_PASSO = 15;   // maior = acelera mais rapido
 const int GIRO_MAX_PCT = 60;                // limita a velocidade do giro (girar rapido derrapa)
 const int HISTERESE_EIXO = 15;              // evita ficar trocando frente<->giro na diagonal
+// Todos os intervalos acima sao em PASSO CHEIO. Com micropasso, o pulso sai MICROPASSO
+// vezes mais rapido, mas a velocidade da roda (e a rampa) continua a mesma.
+
+// ---------- Micropasso do DRV8825 (pinos M0/M1/M2 do modulo) ----------
+// DEVE bater com o hardware (ver README, secao Barulho):
+//   1 = passo cheio (M0/M1/M2 soltos, como vem na placa) -> ruidoso em velocidade media
+//   2 = meio passo (M0 em VCC)   4 = 1/4 (M1 em VCC)   8 = 1/8 (M0 e M1 em VCC)
+const unsigned long MICROPASSO = 1;
 
 unsigned long intervaloCruzeiro = INTERVALO_MAX;
 unsigned long intervaloAtual    = INTERVALO_LENTO;
@@ -58,6 +67,7 @@ Movimento comandado = PARADO;
 
 unsigned long ultimoPasso = 0;
 bool nivelPasso = false;
+unsigned long microContador = 0;
 
 // ---------- Recepcao ESP-NOW (callback roda na task do WiFi) ----------
 const unsigned long TIMEOUT_MS = 300;
@@ -104,6 +114,10 @@ void aplicarSentido(Movimento mv) {
   digitalWrite(L_DIR, (esq ^ L_INVERTE) ? HIGH : LOW);
   digitalWrite(R_DIR, (dir ^ R_INVERTE) ? HIGH : LOW);
 }
+
+// Intervalo de largada/parada: o mais lento entre INTERVALO_LENTO e o cruzeiro
+// (com pouca inclinacao, largar em INTERVALO_LENTO seria MAIS RAPIDO que andar).
+unsigned long intervaloInicio() { return max(INTERVALO_LENTO, intervaloCruzeiro); }
 
 bool ehGiro(Movimento m) { return m == ESQUERDA || m == DIREITA; }
 
@@ -168,23 +182,26 @@ void loop() {
     drivers(true);
     estado = comandado;
     aplicarSentido(estado);
-    intervaloAtual = INTERVALO_LENTO;
+    intervaloAtual = intervaloInicio();
+    microContador = 0;
   }
 
   if (estado == PARADO) return;
 
   bool freando = (comandado == PARADO) || (comandado != estado);
-  unsigned long alvo = freando ? INTERVALO_LENTO : intervaloCruzeiro;
+  unsigned long alvo = freando ? intervaloInicio() : intervaloCruzeiro;
 
   unsigned long agora = micros();
-  if (agora - ultimoPasso >= intervaloAtual) {
+  if (agora - ultimoPasso >= intervaloAtual / MICROPASSO) {
     ultimoPasso = agora;
     nivelPasso = !nivelPasso;
     int nivel = nivelPasso ? HIGH : LOW;
     digitalWrite(L_STEP, nivel);
     digitalWrite(R_STEP, nivel);
 
-    if (nivelPasso) { // aplica rampa uma vez por passo completo
+    if (nivelPasso) { // borda de subida = 1 pulso nos dois motores
+      if (++microContador < MICROPASSO) return;  // rampa so a cada passo cheio
+      microContador = 0;
       if (intervaloAtual > alvo) {
         intervaloAtual -= RAMPA_POR_PASSO;
         if (intervaloAtual < alvo) intervaloAtual = alvo;
@@ -193,7 +210,7 @@ void loop() {
         if (intervaloAtual > alvo) intervaloAtual = alvo;
       }
       // Chegou devagar o bastante: para de vez ou troca de sentido.
-      if (freando && intervaloAtual >= INTERVALO_LENTO) {
+      if (freando && intervaloAtual >= intervaloInicio()) {
         if (comandado == PARADO) { estado = PARADO; drivers(false); }
         else { estado = comandado; aplicarSentido(estado); }
       }
