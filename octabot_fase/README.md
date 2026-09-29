@@ -67,9 +67,9 @@ precisa ser corrigida depois.
 - **No mesmo lado**, as pernas ficam a 90° umas das outras. Isso é **mecânico** (vem de
   como as engrenagens foram encaixadas). Se estiver errado, o conserto é reencaixar as
   engrenagens, não mexer no código.
-- **Entre os lados**, o alvo é `Δφ = φR − φL = −90°` (lado direito 90° atrás). Isso é o
-  que o software controla. O valor pode ser trocado pelo app para testar +90°, caso o
-  "−90" esteja invertido.
+- **Entre os lados**, o alvo é a relação que **você salvar** com o botão *Salvar posição
+  atual*. O zero de cada manivela é arbitrário, então o "−90°" no painel é só um rótulo
+  para essa relação. O que vale é a posição física em que você deixou as pernas.
 
 ---
 
@@ -93,23 +93,30 @@ precisa ser corrigida depois.
 | Painel de fase | Mostra φL, φR, Δφ, o alvo e o erro em tempo real (verde = erro < 3°) |
 | **Sincronizar** | Corrige Δφ agora |
 | **Esq − / Esq + / Dir − / Dir +** | Move só aquele lado em ~4,9° (9 passos) |
-| **Zerar (lados iguais)** | Diz ao firmware que "as pernas dos dois lados estão na mesma posição agora". Em seguida ele aplica a defasagem alvo sozinho |
-| **Defasagem** | Muda o alvo (−180 a 180°) e salva. Aperte Sincronizar depois |
+| **Salvar posição atual** | "As pernas estão na posição correta agora": a relação atual vira a referência. **Não move nada** |
+| Texto abaixo do slider | Passos/s e rpm da manivela na velocidade escolhida |
 | **STOP** | Para **tudo**, inclusive uma sincronia em andamento. Soltar um botão de direção **não** cancela a sincronia pós-giro |
 
 ---
 
 ## 3. Calibração (uma vez só)
 
-1. Grave o firmware e abra o app.
-2. Use **Esq ±** e **Dir ±** até que uma perna de referência (por exemplo, a dianteira de
-   cada lado) esteja **na mesma posição nos dois lados**, como a perna esticada lá embaixo.
-3. Aperte **Zerar** e confirme. O lado correspondente anda até ficar a −90°.
-4. Ande para frente. Se a marcha ficou pior do que antes, troque a defasagem para **+90**
-   e aperte **Sincronizar**.
+1. Deixe as pernas na **posição correta de andar**. Pode ser na mão, com o robô desligado,
+   ou com os botões **Esq ±** e **Dir ±** do app (cada toque move ~4,9°).
+2. Abra o app e aperte **Salvar posição atual**. Confirme. O robô **não se mexe**; o
+   painel passa a mostrar erro 0.
+3. Teste: ande para frente, gire, solte. Depois de cada giro, o firmware deve voltar as
+   pernas para essa mesma relação sozinho.
+
+Quer mudar a referência? Ajuste com **Esq ±/Dir ±** e salve de novo.
+
+> Versões anteriores tinham um botão *Zerar* que esperava os dois lados **iguais** e
+> depois aplicava −90° sozinho. Quem já deixava as pernas na posição correta acabava com
+> um deslocamento a mais de 90°, e toda sincronia seguinte alinhava errado. Esse botão foi
+> removido.
 
 Enquanto não calibrar, o app mostra "NAO calibrado", e o firmware assume que o robô foi
-montado já na defasagem correta.
+montado já na posição correta.
 
 ---
 
@@ -124,16 +131,54 @@ largada rápida demais) desloca a fase para sempre, até a próxima calibração
   O ideal é **GPIO34 ou 35**, que só servem de entrada e não têm strapping, mas precisam de
   um resistor de 10k para 3V3. Isso só vale se esses pinos estiverem acessíveis na placa.
   A alternativa é **GPIO5 (U5)**, que usa o pull-up interno.
-- Depois de **Zerar**, o firmware reaprende a posição da marca sozinho.
+- Depois de **Salvar posição atual**, o firmware reaprende a posição da marca sozinho.
 
 ---
 
-## 5. Parâmetros novos (topo do `.ino`)
+## 5. Barulho em velocidade média (50% alto, 100% quieto)
+
+| Slider | Passos/s (passo cheio) | Manivela |
+|:------:|:----------------------:|:--------:|
+| 0% | 200 | 18 rpm |
+| 50% | 377 | 34 rpm |
+| 75% | 678 | 61 rpm |
+| 100% | 3333 | 300 rpm |
+
+- **Causa provável: ressonância do motor de passo em passo cheio.** Em algumas centenas de
+  passos/s, cada passo de 1,8° dá um "tranco" e o rotor oscila. O barulho vem daí, e nessa
+  faixa o motor também **perde passo** com facilidade, o que estraga a fase. Em alta
+  velocidade a inércia suaviza os trancos, por isso fica mais quieto.
+- **Desconfie dos 100%.** 300 rpm na manivela equivale a 1000 rpm no motor, a 12 V, com
+  metade da redução que se imaginava. "Quieto" pode significar que o motor não está
+  acompanhando. Confira se a 100% o robô anda visivelmente mais rápido que a 75%. Se não
+  andar, suba `INTERVALO_MIN` (por exemplo, para 300).
+- **Correção de verdade: micropasso.** Divide cada passo de 1,8° em passos menores, e o
+  movimento fica suave e bem mais silencioso. Precisa de hardware, porque nesta placa os
+  pinos M0/M1/M2 do DRV8825 estão soltos:
+  1. **Com tudo desligado**, ligue o pino **M1** de cada módulo DRV8825 ao VCC lógico. O
+     pino **RST** do próprio módulo já está no VCC nesta placa (é o 2º abaixo do M1). Um fio
+     fino soldado entre M1 e RST resolve.
+     ⚠️ Confira com o multímetro que o RST está em 3,3/5 V, **não em 12 V** (VMOT fica do
+     outro lado do módulo).
+  2. No código, mude `MICROPASSO` para **4**. Velocidades, rampa e ajuste fino continuam
+     iguais em rpm, porque o código compensa sozinho.
+  3. Calibre de novo: a fase salva com outro micropasso é descartada de propósito.
+  - Tabela do DRV8825 (M2 M1 M0): `000` cheio · `001` 1/2 · `010` **1/4** · `011` 1/8.
+    Mais que 4 não é recomendado: os pulsos saem do `loop()` junto com o WiFi, e a 100%
+    com 1/4 o pulso já é de 37 µs.
+- **Sem mexer no hardware:** baixar um pouco o Vref também reduz o ruído, mas perde torque.
+  Outra opção é evitar a faixa ruidosa com o slider (o texto abaixo dele mostra os passos/s
+  para você achar essa faixa).
+
+---
+
+## 6. Parâmetros novos (topo do `.ino`)
 
 | Constante | Padrão | O que é |
 |-----------|:------:|---------|
 | `DENTES_PINHAO` / `DENTES_COROA` | 6 / 20 | Transmissão até a manivela |
-| `defasagemGraus` | −90 | Alvo inicial de φR − φL (depois fica o que foi salvo pelo app) |
+| `MICROPASSO` | 1 | Tem que bater com os jumpers M0/M1/M2 do DRV8825 (ver seção 5) |
+| `defasagemGraus` | −90 | Só o rótulo da relação salva pelo botão *Salvar posição atual* |
 | `PERIODO_MARCHA_GRAUS` | 360 | A cada quantos graus a marcha se repete. Só reduza se as pernas forem idênticas |
 | `AUTO_SINCRONIZAR` | true | Sincroniza sozinho ao terminar um giro |
 | `INTERVALO_AJUSTE` | 1200 µs | Velocidade da sincronia e do ajuste fino |
@@ -142,20 +187,21 @@ largada rápida demais) desloca a fase para sempre, até a próxima calibração
 
 ---
 
-## 6. Como isto foi verificado (e o que não foi)
+## 7. Como isto foi verificado (e o que não foi)
 
 - **Verificado:** o `.ino` compilou no PC contra stubs das bibliotecas do Arduino e rodou
   numa simulação que conta os pulsos STEP "físicos" com o DIR real de cada pino. Os
-  cenários foram: zerar, frente, giro seguido de sincronia automática, giro emendando
-  direto em frente, trás, ajuste fino, sincronia manual, troca da defasagem para +90 e
-  STOP no meio da frenagem de um giro. Em todos, a fase contada bateu com os passos
-  físicos, Δφ voltou ao alvo (±0,2°) e nenhum pulso STEP ficou abaixo dos 1,9 µs exigidos
-  pelo DRV8825.
+  cenários, rodados com `MICROPASSO` 1 e 4, foram: pernas giradas na mão e depois
+  *Salvar posição atual* (sem mover o motor), frente, giro seguido de sincronia
+  automática, giro emendando direto em frente, trás, ajuste fino, sincronia manual,
+  slider baixo e alto, e STOP no meio de um giro. Em todos, as pernas voltaram à posição
+  física salva (±0,2° em passo cheio, ±0,05° em 1/4), a largada nunca ficou mais rápida
+  que o cruzeiro e nenhum pulso STEP ficou abaixo dos 1,9 µs exigidos pelo DRV8825.
 - **Não verificado:** não foi compilado com o core ESP32 real e **não foi testado no
   robô**. Se o motor perder passo, a contagem não percebe (é malha aberta). Esse é o motivo
   do sensor.
 
-## 7. Limitações
+## 8. Limitações
 
 - **Malha aberta.** Sem sensor, a precisão depende de nenhum passo ser perdido.
 - **A sincronia move o robô.** Avançar só um lado faz o robô pivotar um pouco sobre o outro.

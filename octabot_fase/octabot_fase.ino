@@ -21,8 +21,8 @@
  *   - Sensor opcional por lado (hall/optico): corrige passos perdidos a cada volta.
  *
  * COMO USAR: igual ao original (rede "Carrinho-NEMA", senha "12345678", http://192.168.4.1).
- *   Na primeira vez: use os botoes de ajuste para deixar as pernas dos DOIS lados
- *   na MESMA posicao e aperte "Zerar". O firmware aplica a defasagem sozinho.
+ *   Na primeira vez: deixe as pernas na POSICAO CORRETA de andar (na mao com o robo
+ *   desligado, ou com os botoes Esq/Dir +/-) e aperte "Salvar posicao atual".
  */
 
 #include <WiFi.h>
@@ -65,16 +65,23 @@ const unsigned long INTERVALO_MIN    = 150;  // teto de velocidade
 const unsigned long INTERVALO_MAX    = 2500; // piso de velocidade
 const unsigned long RAMPA_POR_PASSO  = 15;
 const unsigned long INTERVALO_AJUSTE = 1200; // velocidade da sincronia/ajuste (lento, sem rampa)
+// Todos os intervalos acima sao em PASSO CHEIO. Com micropasso, o pulso sai MICROPASSO
+// vezes mais rapido, mas a velocidade da perna (e a rampa) continua a mesma.
 
 unsigned long intervaloCruzeiro = 1325; // = 50% do slider
 unsigned long intervaloAtual    = INTERVALO_LENTO;
 
 // ---------- Transmissao e fase ----------
-const long PASSOS_MOTOR  = 200; // passo cheio (M0/M1/M2 livres)
+// Micropasso do DRV8825 (pinos M0/M1/M2 do modulo). DEVE bater com o hardware:
+//   1 = passo cheio (M0/M1/M2 soltos, como vem na placa)  -> ruidoso em velocidade media
+//   2 = meio passo (M0 em VCC)   4 = 1/4 (M1 em VCC)   8 = 1/8 (M0 e M1 em VCC)
+// Ver README (secao Barulho). Acima de 4 o loop() nao da conta da velocidade maxima.
+const long MICROPASSO    = 1;
+const long PASSOS_MOTOR  = 200 * MICROPASSO; // pulsos STEP por volta do motor
 const long DENTES_PINHAO = 6;   // engrenagem PRETA, no eixo do motor
 const long DENTES_COROA  = 20;  // engrenagens CINZAS (manivelas da frente e de tras)
 const long UNID_VOLTA = PASSOS_MOTOR * DENTES_COROA; // 4000 unidades = 1 volta da manivela
-const long UNID_PASSO = DENTES_PINHAO;               // 6 unidades = 1 passo do motor (0,54 graus)
+const long UNID_PASSO = DENTES_PINHAO;               // 6 unidades = 1 pulso STEP (0,54 graus em passo cheio)
 
 // A marcha se repete a cada quantos graus de manivela? 360 = so volta completa conta.
 // (Se as pernas de um lado fossem todas iguais e a 90 graus, poderia ser 90.)
@@ -82,14 +89,15 @@ const long PERIODO_MARCHA_GRAUS = 360;
 const long UNID_PERIODO = PERIODO_MARCHA_GRAUS * UNID_VOLTA / 360;
 
 // Defasagem alvo: quanto o lado DIREITO esta a frente do ESQUERDO, em graus de manivela.
-// -90 = direito 90 graus atras. Ajustavel pelo app (fica salvo).
-int defasagemGraus = -90;
+// Como o zero de cada manivela e arbitrario, este numero so da nome a relacao: o que vale
+// e a posicao salva pelo botao "Salvar posicao atual" (ela passa a ser esta defasagem).
+const int defasagemGraus = -90;
 
 // Sincroniza sozinho ao terminar um giro no eixo.
 const bool AUTO_SINCRONIZAR = true;
 
 // Passos por toque nos botoes de ajuste fino (9 passos ~= 4,9 graus de manivela).
-const long JOG_PASSOS = 9;
+const long JOG_PASSOS = 9 * MICROPASSO;
 
 // Fase de cada manivela, em unidades (0..UNID_VOLTA-1). Cresce quando o lado anda PRA FRENTE.
 long faseL = 0, faseR = 0;
@@ -112,6 +120,7 @@ Movimento comandado = PARADO;   // so recebe PARADO..DIREITA
 
 unsigned long ultimoPasso = 0;
 bool nivelPasso = false;
+long microContador = 0;   // conta pulsos ate fechar 1 passo cheio (rampa e aplicada por passo cheio)
 
 // Ajuste = mover SO UM lado N passos (usado pela sincronia e pelos botoes de ajuste fino).
 bool ajusteEsq = true;
@@ -160,8 +169,7 @@ const char PAGINA[] PROGMEM = R"HTML(
   .jog button,.acoes button{font-size:.85rem;padding:10px 4px;border-radius:12px}
   .acoes{display:flex;gap:8px;width:min(86vw,320px)}
   .acoes button{flex:1}
-  .df{display:flex;gap:8px;align-items:center;font-size:.85rem}
-  .df input{width:70px;padding:8px;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#eee}
+  .info{font-size:.75rem;opacity:.55;font-variant-numeric:tabular-nums}
 </style></head><body>
 <h1>Octabot NEMA17</h1>
 <div class="pad">
@@ -174,23 +182,20 @@ const char PAGINA[] PROGMEM = R"HTML(
 <div class="vel">
   <label>Velocidade: <span id="v">50</span>%</label>
   <input id="s" type="range" min="0" max="100" value="50">
+  <span class="info" id="vi"></span>
 </div>
 <hr>
 <p class="sub">Sincronia das pernas (fase das manivelas)</p>
 <div class="fase" id="fase">...</div>
 <div class="acoes">
   <button id="sync">Sincronizar</button>
-  <button id="zero">Zerar (lados iguais)</button>
+  <button id="cal">Salvar posicao atual</button>
 </div>
 <div class="jog">
   <button data-j="jl" data-n="-1">Esq &minus;</button>
   <button data-j="jl" data-n="1">Esq +</button>
   <button data-j="jr" data-n="-1">Dir &minus;</button>
   <button data-j="jr" data-n="1">Dir +</button>
-</div>
-<div class="df">Defasagem (dir - esq):
-  <input id="dfv" type="number" min="-180" max="180" step="15"> &deg;
-  <button class="ctr" id="dfok">Aplicar</button>
 </div>
 <hr>
 <p class="sub">Gimbal (pan / tilt)</p>
@@ -199,14 +204,22 @@ const char PAGINA[] PROGMEM = R"HTML(
 <script>
 function send(m){fetch('/cmd?m='+m);}
 const sl=document.getElementById('s');
+// Mostra passos/s (passo cheio) e rpm da manivela: ajuda a achar a faixa de ressonancia.
+function infoVel(){
+  const i=Math.trunc(sl.value*(%MIN%-%MAX%)/100)+%MAX%;   // mesmo map() do ESP32
+  const ps=1e6/(2*i);
+  document.getElementById('vi').textContent=Math.round(ps)+' passos/s \u00b7 manivela '+
+    (ps*60*%PIN%/(200*%COR%)).toFixed(0)+' rpm';
+}
 sl.addEventListener('input',()=>{
   document.getElementById('v').textContent=sl.value;
+  infoVel();
   fetch('/cmd?m=v&val='+sl.value);
 });
+infoVel();
 
 // ---- Sincronia / fase ----
 const NOMES=['parado','frente','tras','giro esq','giro dir','ajustando'];
-let dfCarregado=false;
 function atualizar(){
   fetch('/estado').then(r=>r.json()).then(s=>{
     const bom=Math.abs(s.e)<3;
@@ -214,20 +227,16 @@ function atualizar(){
       'Esq '+s.l.toFixed(1)+'&deg; &nbsp; Dir '+s.r.toFixed(1)+'&deg;<br>'+
       'Defasagem '+s.d.toFixed(1)+'&deg; (alvo '+s.a+'&deg;) &nbsp; '+
       '<span class="'+(bom?'ok':'ruim')+'">erro '+s.e.toFixed(1)+'&deg;</span><br>'+
-      '<span style="opacity:.6">'+NOMES[s.s]+(s.c?'':' &middot; NAO calibrado: use Zerar')+'</span>';
-    if(!dfCarregado){document.getElementById('dfv').value=s.a;dfCarregado=true;}
+      '<span style="opacity:.6">'+NOMES[s.s]+(s.c?'':' &middot; NAO calibrado')+'</span>';
   }).catch(()=>{});
 }
 setInterval(atualizar,400); atualizar();
 document.getElementById('sync').addEventListener('click',()=>send('sync'));
-document.getElementById('zero').addEventListener('click',()=>{
-  if(confirm('As pernas dos DOIS lados estao na MESMA posicao?'))send('zero');
+document.getElementById('cal').addEventListener('click',()=>{
+  if(confirm('As pernas estao na posicao CORRETA de andar agora? Ela vira a referencia.'))send('cal');
 });
 document.querySelectorAll('.jog button').forEach(b=>{
   b.addEventListener('click',()=>fetch('/cmd?m='+b.dataset.j+'&n='+b.dataset.n));
-});
-document.getElementById('dfok').addEventListener('click',()=>{
-  fetch('/cmd?m=df&val='+document.getElementById('dfv').value);
 });
 
 // ---- Joystick do gimbal (posicao absoluta; o servo segura onde soltar) ----
@@ -304,7 +313,7 @@ void salvarFases() {
 }
 
 void salvarConfig() {
-  prefs.putInt("df", defasagemGraus);
+  prefs.putInt("mp", MICROPASSO);
   prefs.putBool("cal", calibrado);
   prefs.putLong("rl", refL);
   prefs.putLong("rr", refR);
@@ -312,11 +321,13 @@ void salvarConfig() {
 
 void carregar() {
   prefs.begin("octabot", false);
-  defasagemGraus = prefs.getInt("df", defasagemGraus);
   calibrado = prefs.getBool("cal", false);
   refL = prefs.getLong("rl", -1);
   refR = prefs.getLong("rr", -1);
-  if (prefs.isKey("fl")) {
+  // Fase salva com outro MICROPASSO esta em outra unidade: descarta e pede nova calibracao.
+  bool mesmaUnidade = prefs.getInt("mp", 1) == MICROPASSO;
+  if (!mesmaUnidade) { calibrado = false; refL = refR = -1; }
+  if (prefs.isKey("fl") && mesmaUnidade) {
     faseL = prefs.getLong("fl", 0);
     faseR = prefs.getLong("fr", 0);
   } else {
@@ -341,7 +352,15 @@ void lerSensor(int pin, bool &anterior, long &fase, long &ref, int8_t sentido) {
 }
 
 // ---------- Web handlers ----------
-void handleRaiz() { server.send_P(200, "text/html", PAGINA); }
+// A pagina usa as constantes do firmware (para mostrar passos/s e rpm da manivela).
+void handleRaiz() {
+  String pag = FPSTR(PAGINA);
+  pag.replace("%MIN%", String(INTERVALO_MIN));
+  pag.replace("%MAX%", String(INTERVALO_MAX));
+  pag.replace("%PIN%", String(DENTES_PINHAO));
+  pag.replace("%COR%", String(DENTES_COROA));
+  server.send(200, "text/html", pag);
+}
 
 void handleCmd() {
   String m = server.arg("m");
@@ -361,17 +380,13 @@ void handleCmd() {
   else if (m == "sync") pedidoSync = true;
   else if (m == "jl")   pedidoJogL = server.arg("n").toInt() * JOG_PASSOS;
   else if (m == "jr")   pedidoJogR = server.arg("n").toInt() * JOG_PASSOS;
-  else if (m == "zero" && estado == PARADO) {
-    // Usuario alinhou os dois lados na MESMA posicao: esse passa a ser o zero.
-    faseL = 0; faseR = 0;
-    refL = -1; refR = -1;       // sensor reaprende a marca com o novo zero
+  else if (m == "cal" && estado == PARADO) {
+    // Usuario deixou as pernas na posicao CORRETA: a relacao atual passa a ser o alvo.
+    // Nao move nada.
+    faseR = normaliza(faseL + alvoUnid(), UNID_VOLTA);
+    refL = -1; refR = -1;       // sensor reaprende a marca com a nova referencia
     calibrado = true;
     salvarConfig(); salvarFases();
-    pedidoSync = true;          // aplica a defasagem alvo
-  }
-  else if (m == "df") {
-    defasagemGraus = constrain(server.arg("val").toInt(), -180, 180);
-    salvarConfig();
   }
   server.send(200, "text/plain", "");
 }
@@ -434,6 +449,10 @@ void soltarStep() {
   nivelPasso = false;
 }
 
+// Intervalo de largada/parada: o mais lento entre INTERVALO_LENTO e o cruzeiro
+// (com o slider baixo, largar em INTERVALO_LENTO seria MAIS RAPIDO que andar).
+unsigned long intervaloInicio() { return max(INTERVALO_LENTO, intervaloCruzeiro); }
+
 // Parou de vez: solta os pinos, desliga os drivers e grava a fase.
 void repousar() {
   estado = PARADO;
@@ -480,7 +499,7 @@ void passoAjuste() {
     return;
   }
   unsigned long agora = micros();
-  if (agora - ultimoPasso >= INTERVALO_AJUSTE) {
+  if (agora - ultimoPasso >= INTERVALO_AJUSTE / MICROPASSO) {
     ultimoPasso = agora;
     nivelPasso = !nivelPasso;
     digitalWrite(ajusteEsq ? L_STEP : R_STEP, nivelPasso ? HIGH : LOW);
@@ -538,7 +557,8 @@ void loop() {
       drivers(true);
       estado = comandado;
       aplicarSentido(estado);
-      intervaloAtual = INTERVALO_LENTO;
+      intervaloAtual = intervaloInicio();
+      microContador = 0;
     } else if (pedidoSync) {
       pedidoSync = false;
       iniciarSincronia();
@@ -551,18 +571,20 @@ void loop() {
   }
 
   bool freando = (comandado == PARADO) || (comandado != estado);
-  unsigned long alvo = freando ? INTERVALO_LENTO : intervaloCruzeiro;
+  unsigned long alvo = freando ? intervaloInicio() : intervaloCruzeiro;
 
   unsigned long agora = micros();
-  if (agora - ultimoPasso >= intervaloAtual) {
+  if (agora - ultimoPasso >= intervaloAtual / MICROPASSO) {
     ultimoPasso = agora;
     nivelPasso = !nivelPasso;
     int nivel = nivelPasso ? HIGH : LOW;
     digitalWrite(L_STEP, nivel);
     digitalWrite(R_STEP, nivel);
 
-    if (nivelPasso) { // borda de subida = 1 passo nos dois motores
+    if (nivelPasso) { // borda de subida = 1 pulso nos dois motores
       contarPasso();
+      if (++microContador < MICROPASSO) return;  // rampa so a cada passo cheio
+      microContador = 0;
       if (intervaloAtual > alvo) {
         intervaloAtual -= RAMPA_POR_PASSO;
         if (intervaloAtual < alvo) intervaloAtual = alvo;
@@ -570,7 +592,7 @@ void loop() {
         intervaloAtual += RAMPA_POR_PASSO;
         if (intervaloAtual > alvo) intervaloAtual = alvo;
       }
-      if (freando && intervaloAtual >= INTERVALO_LENTO) {
+      if (freando && intervaloAtual >= intervaloInicio()) {
         bool eraGiro  = (estado == ESQUERDA || estado == DIREITA);
         bool vaiGirar = (comandado == ESQUERDA || comandado == DIREITA);
         soltarStep();
