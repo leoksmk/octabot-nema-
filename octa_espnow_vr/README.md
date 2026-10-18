@@ -24,6 +24,7 @@ celular (WiFi `Octabot` → `http://192.168.4.1`), igual ao Octabot normal.
 **Transmissor (ESP32-C3 Super Mini):**
 - MPU6050: `VCC→3V3`, `GND→GND`, `SDA→GPIO8`, `SCL→GPIO9`
 - LED vermelho (2 pinos): `GPIO10 → resistor ~220Ω → perna + do LED`, `perna − → GND`
+- Botão recentralizar: `GPIO3 → botão → GND` (zera o pan quando você olha pra frente)
 
 **Receptor:** é a placa Mainboard Future Makers 2k26 do Octabot, sem mudança de fiação.
 
@@ -41,12 +42,16 @@ O ESP-NOW precisa do MAC do receptor. Faça uma vez:
 > **Canal:** os dois usam `WIFI_CANAL 1` (igual ao SoftAP do Octabot). Se mudar num,
 > mude no outro — se os canais não baterem, não conecta (LED fica piscando pra sempre).
 
-## Movimento
-- Inclinar o controle para **frente/trás** → **tilt** (cima/baixo do gimbal).
-- Inclinar para os **lados** → **pan** (giro horizontal).
-- Vem do acelerômetro do MPU6050, então **não tem drift**.
-- Se um eixo vier invertido: troque `PAN_INVERTE` / `TILT_INVERTE` **no transmissor**.
-- Os limites de ângulo do servo (`PAN_MIN/MAX`, `TILT_MIN/MAX`) ficam **no receptor** — calibre lá para o servo nunca forçar o batente.
+## Movimento (head-tracking)
+- **Inclinar a cabeça** (acenar) → **tilt**: vem do acelerômetro, **sem drift**.
+- **Virar a cabeça** (yaw) → **pan**: vem do **giroscópio integrado** — segue a cabeça
+  junto, mas **deriva devagar** (o MPU6050 não tem bússola). Por isso:
+  - **Ao ligar, fique parado ~1s** (o código calibra o zero do giroscópio).
+  - Aperte o **botão de recentralizar** (GPIO3) olhando pra frente pra zerar o pan.
+- Ganho 1:1 (`PAN_GANHO`/`TILT_GANHO` no transmissor). Se um eixo vier invertido, use
+  `PAN_INVERTE` / `TILT_INVERTE`. Os limites de ângulo do servo ficam no **receptor**.
+- Se o eixo errado responder (inclina e o pan mexe, ou vice-versa), é questão de como
+  o MPU está montado na cabeça — me avise que troco os eixos no código.
 
 ## Observações honestas
 - ESP-NOW + SoftAP no mesmo ESP32 convivem **desde que no mesmo canal** (por isso o canal fixo). É o ponto que mais dá problema — confira primeiro se não funcionar.
