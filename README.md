@@ -47,15 +47,28 @@ Ou seja: você só encaixa o ESP32 e os 2 DRV8825, liga os motores em X3/X1 e al
 | Eixo | Conector da placa | Sinal |
 |------|:-----------------:|:-----:|
 | Pan (horizontal) | **U3** | GPIO **15** |
-| Tilt (vertical)  | **U4** | GPIO **4**  |
+| Tilt (vertical)  | **U1** | GPIO **2**  |
 
-> Sobra o conector **U1 (GPIO2)** livre para um 3º servo, mas evitei usá-lo: GPIO2 é
-> strapping delicado (LED onboard) e pode atrapalhar o boot. **U5 (GPIO5)** é a saída de
-> fita de LED — não usada por este firmware.
+> ⚠️ **GPIO2 (U1, servo tilt) é strapping** — se o ESP32 não bootar, é o suspeito; o servo
+> conectado nele pode atrapalhar o boot. Se der problema, me avise para trocar a pinagem.
 >
 > Os servos são alimentados pelo **5V** da placa (J1). Dois micro servos (SG90) o 5V do
 > ESP32 até aguenta, mas servos maiores (MG996R) puxam picos de corrente — nesse caso
 > alimente o 5V por uma fonte dedicada, senão o ESP32 pode resetar no meio do movimento.
+
+### Fitas de LED WS2812B (endereçável, via FastLED)
+
+| Fita | Conector da placa | Dados |
+|------|:-----------------:|:-----:|
+| LED 1 | **U4** | GPIO **4** |
+| LED 2 | **U5** | GPIO **5** |
+
+> **Cor e intensidade são fixas no código** (`LED_COR` e `LED_BRILHO` no topo do `.ino`).
+> O app só liga/desliga as duas fitas juntas — e elas **começam ligadas**.
+> Ajuste `NUM_LEDS` (padrão **25**) para o número de LEDs de **cada** fita; tipo `WS2812B`, ordem `GRB`.
+>
+> WS2812 roda em **5V**; use o VCC da placa e confirme que a fonte 5V aguenta a corrente das fitas
+> (cada LED no branco cheio pode puxar ~60 mA — 25 LEDs ≈ 1,5A por fita).
 
 > **Qual é "esquerdo" e qual é "direito"?** É só uma convenção do código. Se ao mandar
 > "frente" o carrinho virar, veja a seção 6 (inverter sentido) ou troque os motores de
@@ -110,12 +123,13 @@ perde passo ou queima.
 ### Gravar
 1. Instale o suporte **ESP32** na Arduino IDE (Boards Manager → "esp32" by Espressif).
 2. Instale a biblioteca **ESP32Servo** (Library Manager → procure "ESP32Servo", by Kevin Harrington)
-   — necessária para os servos do gimbal. `WiFi.h` e `WebServer.h` já são nativas.
+   — necessária para os servos do gimbal. Instale também **FastLED** (procure "FastLED")
+   — necessária para as fitas de LED WS2812B. `WiFi.h` e `WebServer.h` já são nativas.
 3. Selecione **ESP32 Dev Module** e a porta COM.
 4. Abra `dois_nema17_esp32.ino` e clique em **Upload**.
 
 ### Usar o app
-1. No celular, conecte no WiFi: rede **`Carrinho-NEMA`**, senha **`12345678`**.
+1. No celular, conecte no WiFi: rede **`Octabot`**, senha **`12345678`**.
 2. Abra o navegador em **`http://192.168.4.1`**.
 
    | Botão | Ação |
@@ -155,7 +169,7 @@ A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receb
 | `L_INVERTE` / `R_INVERTE` | false / true | Inverte o sentido de uma roda se ela girar ao contrário. |
 | `PAN_INVERTE` / `TILT_INVERTE` | false / false | Inverte o eixo do gimbal se mexer ao contrário. |
 | `SERVO_PAN_PIN` / `SERVO_TILT_PIN` | 15 / 4 | GPIOs dos servos (U3 / U4). |
-| `AP_SSID` / `AP_PASS` | Carrinho-NEMA / 12345678 | Nome e senha da rede WiFi criada. |
+| `AP_SSID` / `AP_PASS` | Octabot / 12345678 | Nome e senha da rede WiFi criada. |
 
 ---
 
@@ -184,5 +198,5 @@ A página reenvia o comando a cada 150 ms; se o ESP32 ficar **> 500 ms sem receb
 - **Curva é só no eixo (tank).** Não faz curva em arco andando.
 - **Não foi testado em hardware neste ambiente.** Os pinos vêm do esquemático (corretos),
   mas os parâmetros de velocidade/rampa e o Vref devem ser calibrados no primeiro teste.
-- **Gimbal usa U3 (pan) e U4 (tilt).** Sobram **U1** (3º servo) e **U5** (fita de LED), não
-  usados por este firmware.
+- **Gimbal usa U3 (pan) e U4 (tilt).** As fitas de LED WS2812 usam **U5** e **U1**. Os 4
+  conectores extras da placa estão todos em uso por este firmware.
