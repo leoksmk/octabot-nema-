@@ -35,6 +35,7 @@ struct SerialMock {
   void begin(int) {}
   template <class... A> void printf(const char* f, A... a) { if (!quiet) { std::printf("    [serial] "); std::printf(f, a...); } }
   void println(const char* s) { if (!quiet) std::printf("    [serial] %s\n", s); }
+  size_t write(const uint8_t* b, size_t n) { if (!quiet) { std::printf("    [serial] "); std::fwrite(b, 1, n, stdout); } return n; }
 };
 extern SerialMock Serial;
 

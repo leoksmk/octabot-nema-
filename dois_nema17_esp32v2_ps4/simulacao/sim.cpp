@@ -12,6 +12,9 @@ SerialMock Serial;
 
 #include "Bluepad32.h"
 Bluepad32Mock BP32;
+#include "WiFi.h"
+WiFiMock WiFi;
+TelnetPeer g_peer;
 
 #ifndef SKETCH
 #define SKETCH "../dois_nema17_esp32v2_ps4.ino"
@@ -220,6 +223,26 @@ int main(int argc, char** argv) {
   for (int i = 0; i < 150; i++) { pad->ax = 360 + (rand() % 41 - 20); pad->ay = -360 + (rand() % 41 - 20); rodar(20); }
   check(trocasDir.size() - tr0 <= 1, "nao fica alternando frente/gira", fmt("(%g trocas de direcao)", trocasDir.size() - tr0));
   solta(); tempoAteParar(3000);
+
+  cenas.push_back({g_us, 18}); std::printf("\n18) Telnet: conecta, recebe log/status, 's' desliga status, WiFi engasgado\n");
+  check(WiFi.ap, "cria a rede WiFi do log");
+  g_peer.conectado = true; g_peer.novo = true; g_peer.recebido.clear(); rodar(100);
+  pad->dp = DPAD_UP; rodar(1200); solta(); tempoAteParar(3000); rodar(600);
+  auto& rx = g_peer.recebido;
+  auto conta = [&](const std::string& s) { size_t n = 0, p = 0; while ((p = rx.find(s, p)) != std::string::npos) { n++; p += s.size(); } return n; };
+  check(conta("comandos: s = status") == 1, "mensagem de ajuda ao conectar");
+  check(conta("estado: FRENTE") == 1 && conta("estado: PARADO") == 1, "eventos de estado no telnet");
+  check(conta(" passos/s limite=") >= 3, "linha de status periodica", fmt("(%.0f linhas)", conta(" passos/s limite=")));
+  std::printf("      exemplo: %s", rx.substr(rx.find("FRENTE cmd=")).substr(0, rx.substr(rx.find("FRENTE cmd=")).find('\n') + 1).c_str());
+  g_peer.digitado.push_back(255); g_peer.digitado.push_back(251); g_peer.digitado.push_back('s'); g_peer.digitado.push_back('\r');
+  rodar(200); size_t antes = conta(" passos/s limite="); rodar(2000);
+  check(conta("status desligado") == 1 && conta(" passos/s limite=") == antes, "'s' desliga o status (ignora lixo telnet)");
+  g_peer.digitado.push_back('s'); rodar(200);
+  g_peer.espacoBuffer = 0; size_t tam = rx.size(); uint64_t passos0 = passosL.size();
+  pad->dp = DPAD_UP; rodar(1500);
+  check(rx.size() == tam && bytesPerdidos > 0, "WiFi engasgado: descarta log", fmt("(%.0f bytes perdidos)", bytesPerdidos));
+  check(std::fabs(taxa(500) - esperado(50)) < esperado(50) * 0.05, "e os motores continuam no ritmo", fmt("(%.0f passos/s, %.0f passos)", taxa(500), passosL.size() - passos0));
+  g_peer.espacoBuffer = 5744; solta(); tempoAteParar(3000);
 
   std::printf("\nGeral\n");
   check(dessincronizados == 0, "rodas sempre no mesmo passo (pernas em fase)", fmt("(%g passos fora)", dessincronizados));

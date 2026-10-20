@@ -26,6 +26,13 @@
  *   X (cruz)            -> STOP (freia na rampa ate o controle soltar tudo).
  *   Soltou tudo / controle desligou / caiu o Bluetooth -> o carrinho para sozinho.
  *
+ * LOG SEM FIO (Telnet), alem do Monitor Serial:
+ *   Conecte no WiFi "Octabot-Log" (senha 12345678) e rode:  telnet 192.168.4.1
+ *   (celular: app "Serial WiFi Terminal" / "JuiceSSH" em modo telnet, porta 23)
+ *   No telnet: "s" liga/desliga a linha de status (2x por segundo), "h" ajuda.
+ *   O WiFi divide o radio com o Bluetooth do controle. Se o controle ficar lento ou
+ *   cair, desligue o Telnet: TELNET_LOG = false.
+ *
  * Esta placa (Mainboard Future Makers 2k26) ja resolve por hardware:
  *   - VMOT de cada driver -> 12V, com capacitor (C3/C4)
  *   - SLEEP e RESET -> VCC (drivers sempre ativos)
@@ -36,6 +43,8 @@
  */
 
 #include <Bluepad32.h>
+#include <WiFi.h>
+#include <stdarg.h>
 #include <ESP32Servo.h>   // instale pelo Library Manager: "ESP32Servo" (Kevin Harrington)
 
 // ---------- Pinos (conforme esquematico Mainboard Future Makers 2k26) ----------
@@ -103,10 +112,35 @@ unsigned long ultimoDado = 0;
 ControllerPtr controle = nullptr;   // so aceitamos UM controle
 uint16_t botoesAntes = 0;
 
+// ---------- Log (Serial + Telnet) ----------
+const bool TELNET_LOG = true;          // false = sem WiFi (so Monitor Serial)
+const char* AP_SSID = "Octabot-Log";
+const char* AP_PASS = "12345678";      // minimo 8 caracteres
+WiFiServer telnetServer(23);
+WiFiClient telnet;
+bool statusLigado = true;              // linha de status periodica ("s" no telnet alterna)
+unsigned long bytesPerdidos = 0;       // log descartado porque o WiFi nao deu conta
+
+// printf para o Serial e para o telnet. Nunca espera o WiFi: se o buffer do telnet
+// estiver cheio, a mensagem e descartada (o loop dos passos nao pode travar).
+void logMsg(const char* fmt, ...) {
+  char buf[200];
+  va_list ap; va_start(ap, fmt);
+  int n = vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  if (n <= 0) return;
+  if (n >= (int)sizeof buf) n = sizeof buf - 1;
+  Serial.write((const uint8_t*)buf, n);
+  if (TELNET_LOG && telnet && telnet.connected()) {
+    if (telnet.availableForWrite() >= n) telnet.write((const uint8_t*)buf, n);
+    else bytesPerdidos += n;
+  }
+}
+
 // ---------- Bluetooth ----------
 void aoConectar(ControllerPtr ctl) {
   if (controle != nullptr) {          // ja tem um controle: recusa o segundo
-    Serial.println("Segundo controle recusado.");
+    logMsg("Segundo controle recusado.\n");
     ctl->disconnect();
     return;
   }
@@ -114,7 +148,7 @@ void aoConectar(ControllerPtr ctl) {
   ultimoDado = millis();
   botoesAntes = 0;
   ControllerProperties p = ctl->getProperties();
-  Serial.printf("Controle conectado: %s (VID=0x%04x PID=0x%04x)\n",
+  logMsg("Controle conectado: %s (VID=0x%04x PID=0x%04x)\n",
                 ctl->getModelName().c_str(), p.vendor_id, p.product_id);
   ctl->setColorLED(0, 0, 255);
   ctl->playDualRumble(0, 250, 0x80, 0x40);
@@ -124,7 +158,7 @@ void aoDesconectar(ControllerPtr ctl) {
   if (ctl != controle) return;
   controle = nullptr;
   comandado = PARADO;                 // caiu o Bluetooth -> para (com rampa)
-  Serial.println("Controle desconectado: parando.");
+  logMsg("Controle desconectado: parando.\n");
 }
 
 // Cor da barra de luz = limite de velocidade (azul = devagar ... vermelho = rapido).
@@ -206,6 +240,50 @@ void lerControle() {
   }
 }
 
+// ---------- Telnet ----------
+const char* NOME_ESTADO[] = {"PARADO", "FRENTE", "TRAS", "ESQUERDA", "DIREITA"};
+
+void ajudaTelnet() {
+  logMsg("Octabot v2 PS4 - comandos: s = status liga/desliga, h = ajuda\n");
+}
+
+// Aceita cliente novo, le comandos, imprime eventos e status. Chamado a cada 5ms.
+void cuidarLog() {
+  static unsigned long ultimoTelnet = 0;
+  if (TELNET_LOG && millis() - ultimoTelnet >= 50) {   // rede a cada 50ms basta
+    ultimoTelnet = millis();
+    WiFiClient novo = telnetServer.available();
+    if (novo) {                                   // novo cliente substitui o antigo
+      if (telnet) telnet.stop();
+      telnet = novo;
+      telnet.setNoDelay(true);
+      ajudaTelnet();
+    }
+    while (telnet && telnet.available()) {
+      int c = telnet.read();
+      if (c == 's') { statusLigado = !statusLigado; logMsg("status %s\n", statusLigado ? "ligado" : "desligado"); }
+      else if (c == 'h') ajudaTelnet();           // demais bytes (negociacao telnet, enter) ignorados
+    }
+  }
+
+  // Eventos: troca de estado e de limite.
+  static Movimento estadoLogado = PARADO;
+  static int limiteLogado = LIMITE_INICIAL;
+  if (estado != estadoLogado) { logMsg("[%lu ms] estado: %s\n", millis(), NOME_ESTADO[estado]); estadoLogado = estado; }
+  if (limitePct != limiteLogado) { logMsg("[%lu ms] limite: %d%%\n", millis(), limitePct); limiteLogado = limitePct; }
+
+  // Status periodico.
+  static unsigned long ultimoStatus = 0;
+  if (statusLigado && millis() - ultimoStatus >= 500) {
+    ultimoStatus = millis();
+    unsigned long ps = (estado == PARADO) ? 0 : 1000000UL / (2 * intervaloAtual);
+    logMsg("%s cmd=%s %lu passos/s limite=%d%% gimbal=%d/%d LX=%d LY=%d BT=%s perdidos=%lu\n",
+           NOME_ESTADO[estado], NOME_ESTADO[comandado], ps, limitePct, (int)panAng, (int)tiltAng,
+           controle ? controle->axisX() : 0, controle ? controle->axisY() : 0,
+           controle ? "ok" : "--", bytesPerdidos);
+  }
+}
+
 // ---------- Motores ----------
 // Liga/desliga os dois drivers (EN ativo em nivel baixo).
 void drivers(bool ligado) {
@@ -250,7 +328,14 @@ void setup() {
   BP32.enableVirtualDevice(false);   // touchpad do DS4 nao vira "mouse"
   // Se o controle nao reconectar depois de parear com outro aparelho, descomente 1 vez:
   // BP32.forgetBluetoothKeys();
-  Serial.printf("Bluepad32 %s - segure SHARE + PS no controle para parear.\n", BP32.firmwareVersion());
+  if (TELNET_LOG) {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    telnetServer.begin();
+    telnetServer.setNoDelay(true);
+    logMsg("Telnet: WiFi \"%s\" -> telnet %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+  }
+  logMsg("Bluepad32 %s - segure SHARE + PS no controle para parear.\n", BP32.firmwareVersion());
 }
 
 void loop() {
@@ -260,6 +345,7 @@ void loop() {
     ultimoBT = millis();
     BP32.update();
     lerControle();
+    cuidarLog();
   }
 
   // Troca de estado com seguranca: nao inverte em velocidade.
