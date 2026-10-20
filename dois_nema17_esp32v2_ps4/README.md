@@ -33,6 +33,33 @@ tem, mas ESP32-C3/S3 **não** servem.
 Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (89% da flash com o status WiFi).
 **Não foi testado no hardware.**
 
+## Instalação (PlatformIO)
+
+A pasta já é um projeto PlatformIO ([`platformio.ini`](platformio.ini)); o mesmo `.ino` continua
+abrindo na Arduino IDE.
+
+1. **Uma vez só**, nesta pasta, rode:
+   ```
+   python preparar_bluepad32.py
+   ```
+   (no VS Code: menu do PlatformIO > *New Terminal*). Ele baixa o framework Arduino + Bluepad32
+   (~200 MB) para `.bluepad32/framework` e corrige o nome do pacote: o pacote oficial se chama
+   `framework-arduinoespressif32bluepad32` e o PlatformIO só aceita substituir o framework por um
+   pacote chamado `framework-arduinoespressif32`.
+2. No VS Code, **File > Open Folder** nesta pasta (`dois_nema17_esp32v2_ps4/`).
+3. **Build** e **Upload** normais do PlatformIO. O **Serial Monitor** já vem a 115200 e traduz
+   travamentos (Guru Meditation) em nome de função e linha.
+
+Diferenças em relação à Arduino IDE:
+- Usa a partição **huge_app** (3 MB para o programa, sem OTA): a flash fica em ~38% em vez de ~89%.
+  As configurações gravadas (limite de velocidade) ficam no mesmo lugar e não se perdem.
+- `.pio/` e `.bluepad32/` não vão para o git (`.gitignore`).
+
+Testado aqui: o script baixa e prepara o pacote, e o build passa com PlatformIO 6.2 +
+espressif32 6.9.0 (Arduino-ESP32 2.0.17, mesmo compilador da Bluepad32 4.1.0).
+O download da biblioteca ESP32Servo pelo PlatformIO não pôde ser testado aqui (servidor bloqueado
+nesta máquina); o build usou a mesma biblioteca baixada do GitHub.
+
 ## Parear
 
 1. Ligue o carrinho. Para ver o que acontece, abra o Monitor Serial em 115200.

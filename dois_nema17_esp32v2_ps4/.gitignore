@@ -1,0 +1,11 @@
+# PlatformIO
+.pio/
+.vscode/
+# framework Bluepad32 baixado por preparar_bluepad32.py (~600 MB)
+.bluepad32/
+# simulacao
+simulacao/sim
+simulacao/*.csv
+simulacao/pagina.html
+simulacao/respostas.txt
+simulacao/resposta_reboot.txt

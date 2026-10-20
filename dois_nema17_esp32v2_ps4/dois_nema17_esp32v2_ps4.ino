@@ -344,8 +344,9 @@ pre{background:#0a0a0a;border:1px solid #2c2c2c;border-radius:10px;padding:8px;h
 <pre id="log"></pre>
 <script>
 let pos=0;const $=i=>document.getElementById(i),L=$('log');
-function on(ok){$('on').textContent=ok?'ao vivo':'sem conexao';$('on').style.background=ok?'#14532d':'#7f1d1d';}
-async function tick(){
+// funcoes em formato "const x=()=>": o PlatformIO confunde "function nome(){" com funcao C++ ao converter o .ino
+const on=ok=>{$('on').textContent=ok?'ao vivo':'sem conexao';$('on').style.background=ok?'#14532d':'#7f1d1d';};
+const tick=async()=>{
   try{
     const r=await fetch('/dados?p='+pos,{cache:'no-store'});const t=await r.text();
     const a=t.indexOf('\n'),b=t.indexOf('\n',a+1);const h=t.slice(0,a).split(' ');const s=JSON.parse(t.slice(a+1,b));
@@ -360,7 +361,7 @@ async function tick(){
     $('rc').style.borderColor=/TRAVOU|WATCHDOG|BROWNOUT/.test(s.rst)?'#dc2626':'#2c2c2c';on(true);
   }catch(e){on(false);}
   setTimeout(tick,500);
-}
+};
 tick();
 </script></body></html>)HTML";
 
