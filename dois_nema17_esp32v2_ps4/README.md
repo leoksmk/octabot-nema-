@@ -70,3 +70,14 @@ Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho, c
   Para curva andando, veja `dois_nema17_esp32_curva/`.
 - Como o comportamento de um controle paralelo varia, confira no Monitor Serial o nome/VID/PID
   que aparece ao conectar. Se a Bluepad32 não reconhecer o BGP 2016 como DS4, mande esse log.
+
+## Simulação (sem hardware)
+
+[`simulacao/`](simulacao/) roda este `.ino` **sem modificação** no PC, com Arduino, servos e
+Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (17 cenários: drift,
+rampa, troca de direção, X, queda do Bluetooth, reconexão, 2º controle, clone sem dados,
+gimbal, L1/R1, diagonal). Rode `./simulacao/rodar.sh` (precisa de g++).
+
+O que ela **não** cobre: parear o BGP 2016 de verdade, o motor perder passo, e o tempo
+real que o `BP32.update()` trava o loop. Para esse último, `./rodar.sh 300` simula 300 µs
+de trava a cada 5 ms (a velocidade máxima cai uns 7%).
