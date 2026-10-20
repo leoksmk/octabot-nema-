@@ -1,0 +1,67 @@
+# Carrinho NEMA17 v2 — controle de PS4 (Bluetooth)
+
+Mesmo firmware da [`old/dois_nema17_esp32v2`](../old/dois_nema17_esp32v2/dois_nema17_esp32v2.ino)
+(micropasso, rampa corrigida, curva tank, gimbal pan/tilt), mas **sem WiFi/página HTML**:
+quem controla agora é um **controle de PS4 via Bluetooth**. Foi feito para o controle
+paralelo **BGP 2016**, e também serve para o DualShock 4 original.
+
+Código: [`dois_nema17_esp32v2_ps4.ino`](dois_nema17_esp32v2_ps4.ino)
+
+## Por que Bluepad32 (e não a lib "PS4Controller")
+
+A lib `PS4Controller` só conecta se você gravar o MAC do ESP32 no controle (SixaxisPairTool)
+e costuma falhar com controle paralelo. A **Bluepad32** pareia direto (SHARE + PS) e aceita
+a maioria dos clones de DS4. Precisa de um ESP32 com Bluetooth clássico. O DevKit v1 da placa
+tem, mas ESP32-C3/S3 **não** servem.
+
+## Instalação (Arduino IDE)
+
+1. **Arquivo > Preferências > URLs adicionais para Gerenciadores de Placas**, adicione:
+   ```
+   https://raw.githubusercontent.com/ricardoquesada/esp32-arduino-lib-builder/master/bluepad32_files/package_esp32_bluepad32_index.json
+   ```
+2. **Ferramentas > Placa > Gerenciador de Placas**: instale **esp32_bluepad32**.
+3. **Placa:** `esp32_bluepad32` > **ESP32 Dev Module** (não use a placa "esp32" comum: lá não existe `Bluepad32.h`).
+4. **Library Manager:** instale **ESP32Servo** (Kevin Harrington).
+5. Grave o código.
+
+Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (55% da flash).
+**Não foi testado no hardware.**
+
+## Parear
+
+1. Ligue o carrinho. Para ver o que acontece, abra o Monitor Serial em 115200.
+2. No controle, segure **SHARE + PS** até a luz piscar rápido.
+3. Conectou: a luz fica **azul** e o controle vibra. Nas próximas vezes, basta apertar **PS**.
+
+Se não conectar depois de ter pareado o controle com o PS4/celular: descomente
+`BP32.forgetBluetoothKeys();` no `setup()`, grave, pareie, e comente de novo.
+
+## Comandos
+
+| Controle | Ação |
+|---|---|
+| Analógico **esquerdo** | anda: frente/trás/gira tank, com velocidade **proporcional** ao quanto você empurra |
+| **D-pad** | anda no limite de velocidade (como os botões do app antigo) |
+| **L1 / R1** | diminui / aumenta o limite de velocidade em 10% (substitui o slider). A luz vai de azul (devagar) a vermelho (rápido) |
+| Analógico **direito** | move o gimbal. Soltando, ele segura a posição |
+| **R3** ou **Triângulo** | centraliza o gimbal |
+| **X** | STOP (freia na rampa) |
+
+Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho, com rampa.
+
+## Ajustes no topo do código
+
+- `ZONA_MORTA` (90 de 512): se o carrinho anda sozinho com o analógico solto (drift, comum em clone), aumente.
+- `TIMEOUT_MS` (1000): para se o controle parar de mandar dados. Se o carrinho "engasgar"
+  com o analógico parado (clone que só manda dado quando algo muda), aumente.
+- `GIMBAL_GRAUS_POR_S`, `PAN_INVERTE`, `TILT_INVERTE`, `L_INVERTE`, `R_INVERTE`, `MICROPASSO`:
+  funcionam como na v2.
+
+## Limitações
+
+- A curva continua **tank** (as duas rodas no mesmo ritmo de passo, como na v2), para manter
+  as pernas em fase. Não dá para fazer curva andando: o analógico escolhe o eixo dominante.
+  Para curva andando, veja `dois_nema17_esp32_curva/`.
+- Como o comportamento de um controle paralelo varia, confira no Monitor Serial o nome/VID/PID
+  que aparece ao conectar. Se a Bluepad32 não reconhecer o BGP 2016 como DS4, mande esse log.
