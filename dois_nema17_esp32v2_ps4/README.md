@@ -46,18 +46,30 @@ Se não conectar depois de ter pareado o controle com o PS4/celular: descomente
 
 | Controle | Ação |
 |---|---|
-| Analógico **esquerdo** | anda: frente/trás/gira tank, com velocidade **proporcional** ao quanto você empurra |
+| Analógico **esquerdo** | anda: frente/trás/gira tank, com velocidade **proporcional** ao quanto você empurra. **Soltou, para na hora** |
 | **D-pad** | anda no limite de velocidade (como os botões do app antigo) |
-| **L1 / R1** | diminui / aumenta o limite de velocidade em 10% (substitui o slider). A luz vai de azul (devagar) a vermelho (rápido). **Fica gravado na flash** (ver abaixo) |
+| **OPTIONS + L1 / R1** | segure OPTIONS e aperte L1/R1: diminui / aumenta o limite de velocidade em 10%. **L1/R1 sozinhos não fazem nada**, para quem só vai dirigir não desconfigurar. A luz vai de azul (devagar) a vermelho (rápido). **Fica gravado na flash** (ver abaixo) |
 | Analógico **direito** | move o gimbal. Soltando, ele segura a posição |
 | **R3** ou **Triângulo** | centraliza o gimbal |
-| **X** | STOP (freia na rampa) |
+| **X** | STOP (para na hora) |
 
-Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho, com rampa.
+Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho.
+
+### Parada na hora
+
+Soltou o analógico (ou X, ou caiu o Bluetooth): os passos param **na hora** (na simulação, no
+pior caso 4,4 ms e 15 passos depois de soltar, na velocidade máxima).
+
+- O driver **continua ligado por 300 ms** depois de parar, travando o motor. Sem isso o motor
+  ficaria solto e o carrinho deslizaria no embalo. Depois desliga para não esquentar.
+- Para **sair** de novo, continua tendo rampa (motor de passo não arranca direto em velocidade alta).
+- Frente direto para ré: para, espera 100 ms e sai de ré devagar.
+- Parar seco em velocidade alta dá tranco na mecânica e o motor pode pular alguns passos no
+  tranco. Se quiser a frenagem suave da v2 de volta: `PARADA_IMEDIATA = false`.
 
 ## Limite de velocidade gravado na flash
 
-O limite escolhido no L1/R1 fica gravado: desligou e ligou de novo, volta no mesmo limite
+O limite escolhido no OPTIONS + L1/R1 fica gravado: desligou e ligou de novo, volta no mesmo limite
 (a página e o log mostram `limite carregado da flash: 70%`).
 
 - Grava **2 s depois do último toque** em L1/R1 **e só com o carrinho parado**. Se você mexer
@@ -132,9 +144,9 @@ backtrace de um travamento. Para ver isso sem notebook:
 ## Simulação (sem hardware)
 
 [`simulacao/`](simulacao/) roda este `.ino` **sem modificação** no PC, com Arduino, servos e
-Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (21 cenários: drift,
+Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (22 cenários: drift,
 rampa, troca de direção, X, queda do Bluetooth, reconexão, 2º controle, clone sem dados,
-gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status, reinício por queda de tensão, limite gravado na flash). Rode `./simulacao/rodar.sh` (precisa de g++).
+gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status, reinício por queda de tensão, limite gravado na flash, parada na hora, L1/R1 sem OPTIONS). Rode `./simulacao/rodar.sh` (precisa de g++).
 
 O que ela **não** cobre: parear o BGP 2016 de verdade, o motor perder passo, e o tempo
 real que o `BP32.update()` trava o loop. Para esse último, `./rodar.sh 300` simula 300 µs

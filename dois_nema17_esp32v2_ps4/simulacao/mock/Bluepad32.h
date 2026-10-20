@@ -3,6 +3,7 @@
 #include "Arduino.h"
 extern int g_updateCostUs;
 
+enum { MISC_BUTTON_SYSTEM = 1 << 0, MISC_BUTTON_SELECT = 1 << 1, MISC_BUTTON_START = 1 << 2 };
 enum { DPAD_UP = 1 << 0, DPAD_DOWN = 1 << 1, DPAD_RIGHT = 1 << 2, DPAD_LEFT = 1 << 3 };
 enum {
   BUTTON_A = 1 << 0, BUTTON_B = 1 << 1, BUTTON_X = 1 << 2, BUTTON_Y = 1 << 3,
@@ -15,7 +16,7 @@ struct ControllerProperties { uint16_t vendor_id = 0x054c, product_id = 0x09cc; 
 class Controller {
  public:
   // estado "fisico" do controle (o teste mexe aqui)
-  int ax = 0, ay = 0, arx = 0, ary = 0; uint16_t btn = 0; uint8_t dp = 0;
+  int ax = 0, ay = 0, arx = 0, ary = 0; uint16_t btn = 0, misc = 0; uint8_t dp = 0;
   bool connected = true, newData = false, refused = false;
   int r = -1, g = -1, b = -1, rumbles = 0; uint8_t bat = 0;  // 0 = clone que nao informa
   bool isConnected() const { return connected; }
@@ -23,6 +24,8 @@ class Controller {
   int axisX() const { return ax; } int axisY() const { return ay; }
   int axisRX() const { return arx; } int axisRY() const { return ary; }
   uint8_t battery() const { return bat; }
+  uint16_t miscButtons() const { return misc; }
+  bool miscStart() const { return misc & MISC_BUTTON_START; }
   uint16_t buttons() const { return btn; } uint8_t dpad() const { return dp; }
   void setColorLED(uint8_t R, uint8_t G, uint8_t B) { r = R; g = G; b = B; }
   void playDualRumble(int, int, int, int) { rumbles++; }

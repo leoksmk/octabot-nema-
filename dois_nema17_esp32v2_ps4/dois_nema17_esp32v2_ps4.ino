@@ -19,13 +19,15 @@
  *
  * COMANDOS:
  *   Analogico ESQUERDO  -> anda (frente/tras/gira tank). Quanto mais empurra, mais rapido.
+ *                          SOLTOU = PARA NA HORA (motor fica travado um instante, sem deslizar).
  *   D-pad               -> anda no limite de velocidade (igual aos botoes do app antigo).
- *   L1 / R1             -> diminui / aumenta o LIMITE de velocidade (10% por toque, = slider antigo).
+ *   OPTIONS + L1 / R1   -> diminui / aumenta o LIMITE de velocidade (10% por toque).
+ *                          L1/R1 SOZINHOS NAO FAZEM NADA: quem so for dirigir nao desconfigura.
  *                          Fica GRAVADO na flash: ao ligar de novo, volta no ultimo limite.
  *                          (grava com o carrinho parado, 2s depois do ultimo toque; vibra curtinho)
  *   Analogico DIREITO   -> gimbal (pan/tilt). Move enquanto empurra; soltar = segura a posicao.
  *   R3 (aperta o direito) ou TRIANGULO -> centraliza o gimbal.
- *   X (cruz)            -> STOP (freia na rampa ate o controle soltar tudo).
+ *   X (cruz)            -> STOP (para na hora enquanto estiver apertado).
  *   Soltou tudo / controle desligou / caiu o Bluetooth -> o carrinho para sozinho.
  *
  * STATUS SEM FIO (o que sairia no Monitor Serial, mas sem cabo):
@@ -84,6 +86,16 @@ const unsigned long INTERVALO_LENTO = 1200; // largada / parada
 const unsigned long INTERVALO_MIN   = 150;  // teto de velocidade (menor = mais rapido; se travar/chiar, suba p/ 180-220)
 const unsigned long INTERVALO_MAX   = 2500; // piso de velocidade
 const unsigned long RAMPA_POR_PASSO = 15;   // acelera mais rapido (maior = chega na velocidade antes)
+
+// ---------- Parada ----------
+// true  = soltou o analogico / X / caiu o BT -> corta os passos NA HORA. A largada continua com
+//         rampa (motor de passo nao arranca direto em velocidade alta).
+// false = freia na rampa como na v2 (mais suave para a mecanica, mas anda um pouco depois de soltar).
+const bool PARADA_IMEDIATA = true;
+const unsigned long SEGURA_MS = 300;  // driver segue ligado apos parar: motor TRAVA em vez de deslizar no embalo
+const unsigned long PAUSA_MS  = 100;  // espera minima parado antes de sair de novo (ex.: frente -> re direto)
+unsigned long paradoEm = 0;
+bool segurando = false;               // parou, driver ainda ligado travando o motor
 
 // ---------- Micropasso do DRV8825 (pinos M0/M1/M2 do modulo) ----------
 // DEVE bater com o hardware. Nesta placa M0/M1/M2 vem soltos = passo cheio (1).
@@ -251,9 +263,11 @@ void lerControle() {
   uint16_t novos  = botoes & ~botoesAntes;   // apertou agora (borda)
   botoesAntes = botoes;
 
-  // L1/R1 = limite de velocidade (substitui o slider)
-  if (novos & BUTTON_SHOULDER_L) { limitePct = max(0,   limitePct - LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
-  if (novos & BUTTON_SHOULDER_R) { limitePct = min(100, limitePct + LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
+  // OPTIONS + L1/R1 = limite de velocidade. L1/R1 sozinhos nao fazem nada (evita desconfigurar).
+  if (controle->miscStart()) {
+    if (novos & BUTTON_SHOULDER_L) { limitePct = max(0,   limitePct - LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
+    if (novos & BUTTON_SHOULDER_R) { limitePct = min(100, limitePct + LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
+  }
 
   // Gimbal: analogico direito move por velocidade (soltar = segura). R3/triangulo centraliza.
   if (novos & (BUTTON_THUMB_R | BUTTON_Y)) {
@@ -319,7 +333,7 @@ pre{background:#0a0a0a;border:1px solid #2c2c2c;border-radius:10px;padding:8px;h
 <div class="g">
 <div class="c"><b>Estado</b><span id="est">-</span></div>
 <div class="c"><b>Velocidade</b><span id="vel">-</span></div>
-<div class="c"><b>Limite (L1/R1)</b><span id="lim">-</span><div class="bar"><i id="limb"></i></div></div>
+<div class="c"><b>Limite (OPTIONS + L1/R1)</b><span id="lim">-</span><div class="bar"><i id="limb"></i></div></div>
 <div class="c"><b>Controle</b><span id="bt">-</span></div>
 <div class="c"><b>Bateria do controle</b><span id="bat">-</span></div>
 <div class="c"><b>Gimbal pan / tilt</b><span id="gim">-</span></div>
@@ -514,16 +528,31 @@ void loop() {
     salvarConfig();
   }
 
+  // Parada imediata: mandou parar (ou trocar de direcao) -> corta os passos agora.
+  if (PARADA_IMEDIATA && estado != PARADO && comandado != estado) {
+    estado = PARADO;
+    nivelPasso = false;
+    digitalWrite(L_STEP, LOW);
+    digitalWrite(R_STEP, LOW);
+    paradoEm = millis();
+    segurando = true;           // driver continua ligado: motor fica travado
+  }
+  if (segurando && estado == PARADO && millis() - paradoEm >= SEGURA_MS) {
+    segurando = false;
+    drivers(false);             // ja parou de vez: desliga pra nao esquentar
+  }
+
   // Troca de estado com seguranca: nao inverte em velocidade.
   if (comandado != estado) {
-    if (estado == PARADO) {
+    if (estado == PARADO && !(segurando && millis() - paradoEm < PAUSA_MS)) {
       drivers(true);            // religa os drivers ao sair do repouso
+      segurando = false;
       estado = comandado;
       aplicarSentido(estado);
       intervaloAtual = intervaloInicio();
       microContador = 0;
     }
-    // demais transicoes tratadas pela rampa abaixo (freia antes de trocar)
+    // sem PARADA_IMEDIATA: demais transicoes tratadas pela rampa abaixo (freia antes de trocar)
   }
 
   if (estado == PARADO) return;

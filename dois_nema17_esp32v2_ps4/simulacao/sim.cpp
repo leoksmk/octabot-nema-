@@ -98,7 +98,9 @@ double taxa(double ms) {
   return n * 1e6 / (ms * 1000);
 }
 void toque(uint16_t b) { pad->btn |= b; rodar(60); pad->btn &= ~b; rodar(60); }
-void solta() { pad->ax = pad->ay = pad->arx = pad->ary = 0; pad->btn = 0; pad->dp = 0; }
+// OPTIONS segurado + L1/R1 (o jeito certo de mudar o limite)
+void ajuste(uint16_t b) { pad->misc |= MISC_BUTTON_START; rodar(30); toque(b); pad->misc &= ~MISC_BUTTON_START; rodar(30); }
+void solta() { pad->ax = pad->ay = pad->arx = pad->ary = 0; pad->btn = 0; pad->misc = 0; pad->dp = 0; }
 double esperado(int pct) { return 1e6 / (2.0 * map(pct, 0, 100, INTERVALO_MAX, INTERVALO_MIN)); }
 // tempo ate parar de vez (drivers desligados) a partir de agora
 double tempoAteParar(double maxMs) {
@@ -149,7 +151,7 @@ int main(int argc, char** argv) {
   check(tp > 0 && tp < 1000, "freia e desliga drivers", fmt("(parou em %.0f ms)", tp));
 
   cenas.push_back({g_us, 7}); std::printf("\n7) R1 x6 (limite 50 -> 100, deve travar em 100)\n");
-  for (int i = 0; i < 6; i++) toque(BUTTON_SHOULDER_R);
+  for (int i = 0; i < 6; i++) ajuste(BUTTON_SHOULDER_R);
   check(limitePct == 100, "limite = 100%", fmt("(%.0f%%)", limitePct));
   check(pad->r == 255 && pad->b == 0, "luz vermelha no 100%");
 
@@ -171,8 +173,8 @@ int main(int argc, char** argv) {
   check(estado == DIREITA, "estado DIREITA");
   bool trocaLenta = trocasDir.size() > trocas0;
   for (size_t i = trocas0; i < trocasDir.size(); i++) if (trocasDir[i].meioPeriodoAntes < INTERVALO_LENTO - LOOP_US) trocaLenta = false;
-  check(trocaLenta, "so inverte o DIR depois de frear",
-        trocasDir.size() > trocas0 ? fmt("(meio periodo na troca: %.0f us)", trocasDir.back().meioPeriodoAntes) : "(nao trocou)");
+  check(trocaLenta, "motor parado antes de inverter o DIR",
+        trocasDir.size() > trocas0 ? fmt("(parado %.0f ms antes de inverter)", trocasDir.back().meioPeriodoAntes * 2 / 1000) : "(nao trocou)");
   check(g_pin[L_DIR] != g_pin[R_DIR] || (L_INVERTE != R_INVERTE), "rodas em sentidos opostos (tank)");
 
   cenas.push_back({g_us, 10}); std::printf("\n10) X (STOP) com o D-pad ainda apertado\n");
@@ -217,13 +219,13 @@ int main(int argc, char** argv) {
   check(panAng == 90, "Triangulo centraliza");
 
   cenas.push_back({g_us, 16}); std::printf("\n16) L1 x15 (deve travar em 0%%) e andar no 0%%\n");
-  for (int i = 0; i < 15; i++) toque(BUTTON_SHOULDER_L);
+  for (int i = 0; i < 15; i++) ajuste(BUTTON_SHOULDER_L);
   check(limitePct == 0, "limite = 0%");
   pad->dp = DPAD_UP; rodar(1500);
   check(std::fabs(taxa(500) - esperado(0)) < esperado(0) * 0.05, "anda no minimo, nao para",
         fmt("(%.0f passos/s)", taxa(500)));
   solta(); tempoAteParar(3000);
-  for (int i = 0; i < 5; i++) toque(BUTTON_SHOULDER_R);
+  for (int i = 0; i < 5; i++) ajuste(BUTTON_SHOULDER_R);
 
   cenas.push_back({g_us, 17}); std::printf("\n17) Analogico na diagonal (45 graus) com ruido, 3s\n");
   size_t tr0 = trocasDir.size();
@@ -267,7 +269,7 @@ int main(int argc, char** argv) {
                         pos = x.substr(0, x.find(' ')); std::fprintf(q, "%zu\n%s", x.size(), x.c_str()); n++; };
     poll();
     pad->ay = -512; pad->arx = 300; for (int i = 0; i < 4; i++) { rodar(500); poll(); }
-    pad->arx = 0; toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_R); for (int i = 0; i < 3; i++) { rodar(500); poll(); }
+    pad->arx = 0; ajuste(BUTTON_SHOULDER_R); ajuste(BUTTON_SHOULDER_R); for (int i = 0; i < 3; i++) { rodar(500); poll(); }
     std::fclose(q);
     check(maior <= 1900, "resposta curta (max 1500 de log)", fmt("(maior %.0f bytes)", maior));
     std::string atual = web.get("/dados", "p", pos);
@@ -276,7 +278,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 200; i++) logMsg("enchendo o historico linha %d .........................\n", i);
     std::string velho = web.get("/dados", "p", "10");
     check(velho.find(" 1\n") != std::string::npos, "historico estourado: recomeca do mais antigo");
-    solta(); tempoAteParar(3000); for (int i = 0; i < 2; i++) toque(BUTTON_SHOULDER_L);
+    solta(); tempoAteParar(3000); for (int i = 0; i < 2; i++) ajuste(BUTTON_SHOULDER_L);
   }
 
   cenas.push_back({g_us, 20}); std::printf("\n20) ESP32 reinicia no meio do uso (queda de tensao) e depois falta energia\n");
@@ -312,13 +314,13 @@ int main(int argc, char** argv) {
   {
     tempoAteParar(3000); rodar(2500);
     int base = limitePct, grav0 = g_gravacoesFlash, vib0 = pad->rumbles;
-    if (base > 70) { for (int i = 0; i < 3; i++) toque(BUTTON_SHOULDER_L); rodar(2500); base = limitePct; grav0 = g_gravacoesFlash; vib0 = pad->rumbles; }
+    if (base > 70) { for (int i = 0; i < 3; i++) ajuste(BUTTON_SHOULDER_L); rodar(2500); base = limitePct; grav0 = g_gravacoesFlash; vib0 = pad->rumbles; }
     pad->ay = -512; rodar(300);
-    toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_R);
+    ajuste(BUTTON_SHOULDER_R); ajuste(BUTTON_SHOULDER_R);
     rodar(3000);
     check(limitePct == base + 20, "R1 x2 andando", fmt("(%.0f%% -> %.0f%%)", base, limitePct));
     check(g_gravacoesFlash == grav0, "NAO grava com o carrinho andando");
-    solta(); tempoAteParar(3000);
+    solta(); while (estado != PARADO) rodar(1);
     uint64_t tParou = g_us; rodar(100);
     check(g_gravacoesFlash == grav0 + 1 && g_ultimaGravacaoUs >= tParou, "toque foi ha >2s: grava logo que para",
           fmt("(%.0f ms depois de parar)", (g_ultimaGravacaoUs - tParou) / 1000.0));
@@ -326,7 +328,7 @@ int main(int argc, char** argv) {
     check(pad->rumbles == vib0 + 1, "vibra pra confirmar");
     int grav1 = g_gravacoesFlash;
     uint64_t tToque = 0;
-    for (int i = 0; i < 5; i++) { tToque = g_us; toque(BUTTON_SHOULDER_L); }   // tToque = inicio do ultimo aperto
+    for (int i = 0; i < 5; i++) { tToque = g_us + 30000; ajuste(BUTTON_SHOULDER_L); }   // tToque = inicio do ultimo aperto
     rodar(1400);
     check(g_gravacoesFlash == grav1, "parado: espera 2s depois do ultimo toque");
     rodar(1500);
@@ -345,7 +347,48 @@ int main(int argc, char** argv) {
     check(limitePct == 100, "valor estranho na flash -> trava em 100", fmt("(%.0f%%)", limitePct));
     g_flash["limite"] = 55; setup();
     check(limitePct == 50, "valor fora do degrau -> arredonda (55 -> 50)", fmt("(%.0f%%)", limitePct));
-    pad = new Controller(); BP32.onC(pad); solta(); rodar(200);
+    controle = nullptr; pad = new Controller(); BP32.onC(pad); solta(); rodar(200);
+  }
+
+  cenas.push_back({g_us, 22}); std::printf("\n22) Soltou o analogico = para NA HORA; L1/R1 sozinhos nao mudam nada\n");
+  {
+    int lim0 = limitePct;
+    toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_L);
+    check(limitePct == lim0, "L1/R1 sem OPTIONS: ignorados", fmt("(%.0f%%)", limitePct));
+    pad->misc = MISC_BUTTON_START; rodar(500); pad->misc = 0; rodar(100);
+    check(limitePct == lim0, "OPTIONS sozinho: nada");
+    for (int i = 0; i < 10 && limitePct < 100; i++) ajuste(BUTTON_SHOULDER_R);
+    check(limitePct == 100, "OPTIONS + R1 sobe ate 100%");
+    pad->ay = -512; rodar(1500);
+    double v = taxa(300);
+    // solta em varios instantes diferentes (fase em relacao ao relatorio BT / leitura de 5 ms)
+    double piorMs = 0; long piorPassos = 0;
+    for (int k = 0; k < 12; k++) {
+      pad->ay = -512; rodar(600 + k * 0.7);
+      size_t n = passosL.size(); uint64_t t = g_us; pad->ay = 0;
+      while (estado != PARADO) rodar(0.02);
+      piorMs = std::max(piorMs, (g_us - t) / 1000.0); piorPassos = std::max(piorPassos, (long)(passosL.size() - n));
+      rodar(150);
+    }
+    pad->ay = 0; uint64_t tSolta = g_us; rodar(1000);
+    uint64_t ultimo = passosL.back().t;
+    double paraMs = ultimo > tSolta ? (ultimo - tSolta) / 1000.0 : 0;
+    long depois = 0; for (auto& p : passosL) if (p.t > tSolta) depois++;
+    (void)paraMs; (void)depois;
+    check(piorMs < 15, "na velocidade maxima, para em menos de 15 ms", fmt("(a %.0f passos/s: pior caso %.1f ms e %.0f passos depois de soltar, em 12 tentativas)", v, piorMs, piorPassos));
+    // driver segue ligado um tempo travando o motor, depois desliga
+    pad->ay = -512; rodar(800); pad->ay = 0; uint64_t t1 = g_us; rodar(150);
+    check(g_pin[L_EN] == LOW, "parado: driver segue ligado (motor travado, nao desliza)");
+    rodar(250);
+    check(g_pin[L_EN] == HIGH, "depois de ~300 ms desliga o driver (nao esquenta)", fmt("(%.0f ms)", (g_us - t1) / 1000.0));
+    // frente direto pra re: para, espera, sai de re devagar e acelera
+    pad->ay = -512; rodar(800); size_t n0 = passosL.size(); uint64_t tTroca = g_us;
+    pad->ay = 512; rodar(800);
+    double pausa = 0; for (size_t i = n0 + 1; i < passosL.size(); i++) if (passosL[i].t > tTroca) pausa = std::max(pausa, (passosL[i].t - passosL[i - 1].t) / 1000.0);
+    check(estado == TRAS && pausa >= 100, "frente -> re: para, espera 100 ms e sai de re", fmt("(%.0f ms parado)", pausa));
+    solta(); rodar(500);
+    for (int i = 0; i < 10 && limitePct > 50; i++) ajuste(BUTTON_SHOULDER_L);
+    rodar(2500);
   }
 
   std::printf("\nGeral\n");
