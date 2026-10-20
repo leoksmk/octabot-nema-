@@ -15,6 +15,8 @@ Bluepad32Mock BP32;
 #include "WiFi.h"
 WiFiMock WiFi;
 #include "WebServer.h"
+#include "esp_system.h"
+esp_reset_reason_t g_motivo = ESP_RST_POWERON;
 TelnetPeer g_peer;
 
 #ifndef SKETCH
@@ -271,6 +273,35 @@ int main(int argc, char** argv) {
     std::string velho = web.get("/dados", "p", "10");
     check(velho.find(" 1\n") != std::string::npos, "historico estourado: recomeca do mais antigo");
     solta(); tempoAteParar(3000); for (int i = 0; i < 2; i++) toque(BUTTON_SHOULDER_L);
+  }
+
+  cenas.push_back({g_us, 20}); std::printf("\n20) ESP32 reinicia no meio do uso (queda de tensao) e depois falta energia\n");
+  {
+    pad->ay = -512; rodar(500);
+    logMsg("ultima coisa antes de cair\n");
+    // brownout: RAM normal some, memoria RTC (log) fica. Simula chamando o setup() de novo.
+    g_motivo = ESP_RST_BROWNOUT; estado = comandado = PARADO; controle = nullptr; g_us += 300000;
+    setup();
+    // le o log inteiro seguindo a posicao, como a pagina faz
+    auto lerTudo = [&]() { std::string tudo, p = "0", ult;
+      for (int i = 0; i < 20; i++) { std::string x = web.get("/dados", "p", p); size_t a = x.find('\n'), b = x.find('\n', a + 1);
+        std::string np = x.substr(0, x.find(' ')); tudo += x.substr(b + 1); ult = x.substr(0, b + 1); if (np == p) break; p = np; }
+      return ult + tudo; };
+    std::string r = lerTudo();
+    check(r.find("ultima coisa antes de cair") != std::string::npos, "log de ANTES do reinicio continua na pagina");
+    check(r.find("BOOT #1 - motivo: BROWNOUT") != std::string::npos, "log marca o reinicio e o motivo");
+    check(r.find("\"rst\":\"BROWNOUT (tensao caiu)\",\"boots\":1}") != std::string::npos, "painel mostra o motivo");
+    size_t a = r.find('\n'), b2 = r.find('\n', a + 1);
+    std::string js = r.substr(a + 1, b2 - a - 1);
+    check(js.front() == '{' && js.back() == '}', "JSON completo (nao cortado)", fmt("(%.0f chars)", js.size()));
+    FILE* f = std::fopen("resposta_reboot.txt", "w"); std::fputs(r.c_str(), f); std::fclose(f);
+    g_motivo = ESP_RST_PANIC; g_us += 300000; setup();
+    check(web.get("/dados", "p", "0").find("\"boots\":2") != std::string::npos, "conta reinicios seguidos");
+    g_motivo = ESP_RST_POWERON; g_us += 300000; setup();
+    r = lerTudo();
+    check(r.find("ultima coisa antes de cair") == std::string::npos && r.find("BOOT #0 - motivo: LIGOU") != std::string::npos,
+          "faltou energia de vez: comeca log limpo");
+    pad = new Controller(); BP32.onC(pad); solta(); rodar(200);
   }
 
   std::printf("\nGeral\n");

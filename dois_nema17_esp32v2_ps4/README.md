@@ -68,7 +68,15 @@ esquerdo e tempo ligado. Embaixo vem o **log desde o boot** (conexão do control
 nome/VID/PID, trocas de estado e de limite), mesmo que você abra a página depois.
 
 - É **só leitura**: o carrinho continua sendo controlado só pelo controle de PS4.
-- O histórico guarda os últimos 4 KB de log na RAM (umas 100 linhas).
+- **Se o ESP32 reiniciar sozinho** (queda de tensão, travamento, watchdog), o log de antes
+  **não se perde**: fica numa memória (RTC) que sobrevive ao reinício. A página mostra
+  `===== BOOT #n - motivo: ... =====` no log e um cartão vermelho **Último reinício**:
+  - `BROWNOUT (tensao caiu)`: bateria fraca ou motores puxando demais. É o mais provável num carrinho.
+  - `TRAVOU (panic / Guru Meditation)` ou `WATCHDOG`: bug no firmware. O detalhe (backtrace)
+    só sai no serial de verdade; veja "Serial de verdade pelo celular" abaixo.
+  - O log só apaga quando falta energia de vez (desligou a chave). Depois de um reinício, o
+    relógio do log volta a 0 s.
+- O histórico guarda os últimos 4 KB de log (umas 100 linhas).
 - Também dá para ler por Telnet (`telnet 192.168.4.1`), que inclui uma linha de status
   periódica (`s` liga/desliga, `h` ajuda).
 - O log **nunca espera o WiFi**. Cada atualização da página é curta (no máximo ~1,5 KB) e
@@ -80,7 +88,18 @@ nome/VID/PID, trocas de estado e de limite), mesmo que você abra a página depo
 - O firmware fica com 89% da flash. Se crescer mais, use **Ferramentas > Partition Scheme >
   Huge APP**.
 
-## Ajustes no topo do código
+## Serial de verdade pelo celular (sem notebook)
+
+A página mostra o que o firmware imprime, mas **não** mostra o que vai direto para a porta
+serial: mensagens de boot do ESP32, mensagens internas da Bluepad32 sobre o pareamento e o
+backtrace de um travamento. Para ver isso sem notebook:
+
+- **Android:** cabo **USB OTG** (ou adaptador USB-C → USB-A) + cabo USB do ESP32 e o app
+  **"Serial USB Terminal"** (Kai Morich). Escolha 115200 baud. Funciona com os chips CP2102 e
+  CH340 dos DevKits.
+- **iPhone:** não funciona (o iOS não aceita esses chips USB-serial). Fica só a página.
+
+
 
 - `ZONA_MORTA` (90 de 512): se o carrinho anda sozinho com o analógico solto (drift, comum em clone), aumente.
 - `TIMEOUT_MS` (1000): para se o controle parar de mandar dados. Se o carrinho "engasgar"
@@ -99,9 +118,9 @@ nome/VID/PID, trocas de estado e de limite), mesmo que você abra a página depo
 ## Simulação (sem hardware)
 
 [`simulacao/`](simulacao/) roda este `.ino` **sem modificação** no PC, com Arduino, servos e
-Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (19 cenários: drift,
+Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (20 cenários: drift,
 rampa, troca de direção, X, queda do Bluetooth, reconexão, 2º controle, clone sem dados,
-gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status). Rode `./simulacao/rodar.sh` (precisa de g++).
+gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status, reinício por queda de tensão). Rode `./simulacao/rodar.sh` (precisa de g++).
 
 O que ela **não** cobre: parear o BGP 2016 de verdade, o motor perder passo, e o tempo
 real que o `BP32.update()` trava o loop. Para esse último, `./rodar.sh 300` simula 300 µs

@@ -13,6 +13,7 @@
 #define OUTPUT 1
 #define INPUT 0
 #define PROGMEM
+#define RTC_NOINIT_ATTR
 
 // Relogio virtual (us). O loop do teste avanca isso.
 extern uint64_t g_us;

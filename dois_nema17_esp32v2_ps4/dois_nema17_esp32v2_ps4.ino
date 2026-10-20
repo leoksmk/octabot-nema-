@@ -47,6 +47,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <stdarg.h>
+#include <esp_system.h>   // esp_reset_reason()
 #include <ESP32Servo.h>   // instale pelo Library Manager: "ESP32Servo" (Kevin Harrington)
 
 // ---------- Pinos (conforme esquematico Mainboard Future Makers 2k26) ----------
@@ -124,10 +125,16 @@ WiFiClient telnet;
 bool statusLigado = true;              // linha de status periodica no Serial/telnet ("s" alterna)
 unsigned long bytesPerdidos = 0;       // log de telnet descartado porque o WiFi nao deu conta
 
-// Historico do log na RAM (a pagina mostra desde o boot, mesmo abrindo depois).
+// Historico do log na memoria RTC: SOBREVIVE a reinicio por travamento, watchdog e queda de
+// tensao (brownout). So apaga quando falta energia de vez. Assim, se o ESP32 reiniciar no meio
+// do uso, a pagina mostra o que estava acontecendo antes e o motivo do reinicio.
 const size_t LOG_TAM = 4096;
-char logBuf[LOG_TAM];
-uint32_t logTotal = 0;                 // bytes ja escritos desde o boot (posicao absoluta)
+const uint32_t LOG_MAGICO = 0x0C7AB072;
+RTC_NOINIT_ATTR char logBuf[LOG_TAM];
+RTC_NOINIT_ATTR uint32_t logTotal;     // bytes ja escritos (posicao absoluta)
+RTC_NOINIT_ATTR uint32_t logMagico;    // != LOG_MAGICO = memoria com lixo (acabou de ligar)
+RTC_NOINIT_ATTR uint32_t boots;        // reinicios desde que ligou a energia
+const char* motivoReinicio = "?";
 
 // Manda texto para o Serial e o telnet; 'guardar' = tambem no historico da pagina.
 // Nunca espera o WiFi: se o buffer do telnet estiver cheio, descarta (os passos nao podem travar).
@@ -137,6 +144,34 @@ void saida(const char* buf, int n, bool guardar) {
   if (LOG_WIFI && telnet && telnet.connected()) {
     if (telnet.availableForWrite() >= n) telnet.write((const uint8_t*)buf, n);
     else bytesPerdidos += n;
+  }
+}
+
+// Motivo do ultimo reinicio, em portugues. Os que importam no carrinho:
+// BROWNOUT = tensao caiu (bateria fraca / motor puxando demais); TRAVOU/WATCHDOG = bug.
+const char* nomeMotivo(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:  return "LIGOU (energia)";
+    case ESP_RST_EXT:      return "BOTAO EN/RESET";
+    case ESP_RST_SW:       return "REINICIO POR SOFTWARE";
+    case ESP_RST_PANIC:    return "TRAVOU (panic / Guru Meditation)";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return "WATCHDOG (loop travado)";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (tensao caiu)";
+    case ESP_RST_DEEPSLEEP:return "DEEP SLEEP";
+    default:               return "DESCONHECIDO";
+  }
+}
+
+// Chamado no inicio do setup(): mantem o log antigo se foi reinicio (nao falta de energia).
+void iniciarLog() {
+  esp_reset_reason_t r = esp_reset_reason();
+  motivoReinicio = nomeMotivo(r);
+  if (r == ESP_RST_POWERON || logMagico != LOG_MAGICO) {
+    logMagico = LOG_MAGICO; logTotal = 0; boots = 0;
+  } else {
+    boots++;
   }
 }
 
@@ -283,6 +318,7 @@ pre{background:#0a0a0a;border:1px solid #2c2c2c;border-radius:10px;padding:8px;h
 <div class="c"><b>Gimbal pan / tilt</b><span id="gim">-</span></div>
 <div class="c"><b>Analogico esq. X / Y</b><span id="ax">-</span></div>
 <div class="c"><b>Ligado ha</b><span id="up">-</span></div>
+<div class="c" id="rc" style="grid-column:1/-1"><b>Ultimo reinicio</b><span id="rst">-</span></div>
 </div>
 <pre id="log"></pre>
 <script>
@@ -298,7 +334,9 @@ async function tick(){
     $('vel').textContent=s.ps+' passos/s';$('lim').textContent=s.lim+'%';$('limb').style.width=s.lim+'%';
     $('bt').textContent=s.bt?s.nome:'desconectado';$('bat').textContent=s.bat<0?'n/d':s.bat+'%';
     $('gim').textContent=s.pan+' / '+s.tilt;$('ax').textContent=s.lx+' / '+s.ly;
-    $('up').textContent=Math.floor(s.up/60)+'min '+(s.up%60)+'s';on(true);
+    $('up').textContent=Math.floor(s.up/60)+'min '+(s.up%60)+'s';
+    $('rst').textContent=s.rst+(s.boots?' ('+s.boots+' reinicio(s) desde que ligou)':'');
+    $('rc').style.borderColor=/TRAVOU|WATCHDOG|BROWNOUT/.test(s.rst)?'#dc2626':'#2c2c2c';on(true);
   }catch(e){on(false);}
   setTimeout(tick,500);
 }
@@ -316,14 +354,14 @@ void webDados() {
   if (desde > logTotal || desde < maisAntigo) { desde = maisAntigo; reset = true; }  // reboot ou ficou pra tras
   uint32_t ate = min(logTotal, desde + 1500);
 
-  char cab[360];
+  char cab[480];
   int n = snprintf(cab, sizeof cab,
     "%lu %d\n{\"est\":\"%s\",\"cmd\":\"%s\",\"ps\":%lu,\"lim\":%d,\"bt\":%d,\"nome\":\"%s\",\"bat\":%d,"
-    "\"pan\":%d,\"tilt\":%d,\"lx\":%d,\"ly\":%d,\"up\":%lu}\n",
+    "\"pan\":%d,\"tilt\":%d,\"lx\":%d,\"ly\":%d,\"up\":%lu,\"rst\":\"%s\",\"boots\":%lu}\n",
     (unsigned long)ate, reset ? 1 : 0, NOME_ESTADO[estado], NOME_ESTADO[comandado], passosPorSeg(), limitePct,
     controle ? 1 : 0, controle ? controle->getModelName().c_str() : "", bateriaPct(),
     (int)panAng, (int)tiltAng, controle ? (int)controle->axisX() : 0, controle ? (int)controle->axisY() : 0,
-    millis() / 1000);
+    millis() / 1000, motivoReinicio, (unsigned long)boots);
   String r;
   r.reserve(n + (ate - desde));
   r += cab;
@@ -403,6 +441,8 @@ void aplicarSentido(Movimento mv) {
 
 void setup() {
   Serial.begin(115200);
+  iniciarLog();
+  logMsg("===== BOOT #%lu - motivo: %s =====\n", (unsigned long)boots, motivoReinicio);
   pinMode(L_STEP, OUTPUT); pinMode(L_DIR, OUTPUT);
   pinMode(R_STEP, OUTPUT); pinMode(R_DIR, OUTPUT);
   pinMode(L_EN, OUTPUT);   pinMode(R_EN, OUTPUT);
