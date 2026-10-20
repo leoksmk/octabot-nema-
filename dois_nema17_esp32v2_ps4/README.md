@@ -23,6 +23,11 @@ tem, mas ESP32-C3/S3 **não** servem.
 2. **Ferramentas > Placa > Gerenciador de Placas**: instale **esp32_bluepad32**.
 3. **Placa:** `esp32_bluepad32` > **ESP32 Dev Module** (não use a placa "esp32" comum: lá não existe `Bluepad32.h`).
 4. **Library Manager:** instale **ESP32Servo** (Kevin Harrington).
+   **Não** instale a biblioteca "Bluepad32" do Library Manager: ela aparece como
+   **"Bluepad32 for NINA-W10 boards"** e é para Nano RP2040 Connect, MKR WiFi 1010, Nano 33 IoT etc.,
+   não para ESP32. Para o ESP32, a Bluepad32 já vem **dentro do pacote de placa** do passo 2
+   (com o nome `Bluepad32_ESP32`). Se a NINA já estiver instalada, ela não atrapalha desde que a
+   placa selecionada seja a do passo 3; mesmo assim, desinstale para evitar confusão.
 5. Grave o código.
 
 Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (55% da flash).
