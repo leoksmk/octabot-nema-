@@ -21,6 +21,8 @@
  *   Analogico ESQUERDO  -> anda (frente/tras/gira tank). Quanto mais empurra, mais rapido.
  *   D-pad               -> anda no limite de velocidade (igual aos botoes do app antigo).
  *   L1 / R1             -> diminui / aumenta o LIMITE de velocidade (10% por toque, = slider antigo).
+ *                          Fica GRAVADO na flash: ao ligar de novo, volta no ultimo limite.
+ *                          (grava com o carrinho parado, 2s depois do ultimo toque; vibra curtinho)
  *   Analogico DIREITO   -> gimbal (pan/tilt). Move enquanto empurra; soltar = segura a posicao.
  *   R3 (aperta o direito) ou TRIANGULO -> centraliza o gimbal.
  *   X (cruz)            -> STOP (freia na rampa ate o controle soltar tudo).
@@ -48,6 +50,7 @@
 #include <WebServer.h>
 #include <stdarg.h>
 #include <esp_system.h>   // esp_reset_reason()
+#include <Preferences.h>  // grava config na flash (NVS)
 #include <ESP32Servo.h>   // instale pelo Library Manager: "ESP32Servo" (Kevin Harrington)
 
 // ---------- Pinos (conforme esquematico Mainboard Future Makers 2k26) ----------
@@ -91,6 +94,10 @@ const unsigned long MICROPASSO = 1;
 const int ZONA_MORTA      = 90;   // analogicos vao de -512..511; abaixo disso = solto (clones tem drift)
 const int LIMITE_INICIAL  = 50;   // % (igual ao slider da v2)
 const int LIMITE_PASSO    = 10;   // % por toque em L1/R1
+const unsigned long SALVAR_APOS_MS = 2000;  // espera parar de mexer no L1/R1 antes de gravar
+Preferences prefs;
+int limiteSalvo = -1;             // o que esta na flash agora
+unsigned long limiteMudouEm = 0;
 int limitePct = LIMITE_INICIAL;   // teto de velocidade escolhido no L1/R1
 
 unsigned long intervaloCruzeiro = 1325; // recalculado a cada leitura do controle
@@ -187,6 +194,13 @@ void logMsg(const char* fmt, ...) {
 }
 
 // ---------- Bluetooth ----------
+// Cor da barra de luz = limite de velocidade (azul = devagar ... vermelho = rapido).
+void corLimite() {
+  if (!controle) return;
+  uint8_t r = map(limitePct, 0, 100, 0, 255);
+  controle->setColorLED(r, 0, 255 - r);
+}
+
 void aoConectar(ControllerPtr ctl) {
   if (controle != nullptr) {          // ja tem um controle: recusa o segundo
     logMsg("Segundo controle recusado.\n");
@@ -199,7 +213,7 @@ void aoConectar(ControllerPtr ctl) {
   ControllerProperties p = ctl->getProperties();
   logMsg("Controle conectado: %s (VID=0x%04x PID=0x%04x)\n",
                 ctl->getModelName().c_str(), p.vendor_id, p.product_id);
-  ctl->setColorLED(0, 0, 255);
+  corLimite();                        // luz ja mostra o limite gravado
   ctl->playDualRumble(0, 250, 0x80, 0x40);
 }
 
@@ -208,13 +222,6 @@ void aoDesconectar(ControllerPtr ctl) {
   controle = nullptr;
   comandado = PARADO;                 // caiu o Bluetooth -> para (com rampa)
   logMsg("Controle desconectado: parando.\n");
-}
-
-// Cor da barra de luz = limite de velocidade (azul = devagar ... vermelho = rapido).
-void corLimite() {
-  if (!controle) return;
-  uint8_t r = map(limitePct, 0, 100, 0, 255);
-  controle->setColorLED(r, 0, 255 - r);
 }
 
 void moverGimbal(float dPan, float dTilt) {
@@ -245,8 +252,8 @@ void lerControle() {
   botoesAntes = botoes;
 
   // L1/R1 = limite de velocidade (substitui o slider)
-  if (novos & BUTTON_SHOULDER_L) { limitePct = max(0,   limitePct - LIMITE_PASSO); corLimite(); }
-  if (novos & BUTTON_SHOULDER_R) { limitePct = min(100, limitePct + LIMITE_PASSO); corLimite(); }
+  if (novos & BUTTON_SHOULDER_L) { limitePct = max(0,   limitePct - LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
+  if (novos & BUTTON_SHOULDER_R) { limitePct = min(100, limitePct + LIMITE_PASSO); corLimite(); limiteMudouEm = millis(); }
 
   // Gimbal: analogico direito move por velocidade (soltar = segura). R3/triangulo centraliza.
   if (novos & (BUTTON_THUMB_R | BUTTON_Y)) {
@@ -398,7 +405,7 @@ void cuidarLog() {
 
   // Eventos: troca de estado e de limite.
   static Movimento estadoLogado = PARADO;
-  static int limiteLogado = LIMITE_INICIAL;
+  static int limiteLogado = limitePct;
   if (estado != estadoLogado) { logMsg("estado: %s\n", NOME_ESTADO[estado]); estadoLogado = estado; }
   if (limitePct != limiteLogado) { logMsg("limite: %d%%\n", limitePct); limiteLogado = limitePct; }
 
@@ -414,6 +421,26 @@ void cuidarLog() {
     if (n >= (int)sizeof buf) n = sizeof buf - 1;
     saida(buf, n, false);
   }
+}
+
+// ---------- Config na flash ----------
+void carregarConfig() {
+  prefs.begin("octabot", false);
+  limitePct = constrain(prefs.getInt("limite", LIMITE_INICIAL), 0, 100);
+  limitePct -= limitePct % LIMITE_PASSO;   // mantem nos degraus do L1/R1
+  limiteSalvo = limitePct;
+  logMsg("limite carregado da flash: %d%%\n", limitePct);
+}
+
+// Grava o limite so quando: mudou, faz SALVAR_APOS_MS que ninguem mexe, e o carrinho esta PARADO.
+// (gravar na flash pausa o ESP32 por alguns ms: em movimento isso faria o motor engasgar)
+void salvarConfig() {
+  if (limitePct == limiteSalvo || estado != PARADO) return;
+  if (millis() - limiteMudouEm < SALVAR_APOS_MS) return;
+  prefs.putInt("limite", limitePct);
+  limiteSalvo = limitePct;
+  logMsg("limite %d%% gravado na flash\n", limitePct);
+  if (controle) controle->playDualRumble(0, 80, 0x40, 0x00);   // confirma com vibracao curta
 }
 
 // ---------- Motores ----------
@@ -443,6 +470,7 @@ void setup() {
   Serial.begin(115200);
   iniciarLog();
   logMsg("===== BOOT #%lu - motivo: %s =====\n", (unsigned long)boots, motivoReinicio);
+  carregarConfig();
   pinMode(L_STEP, OUTPUT); pinMode(L_DIR, OUTPUT);
   pinMode(R_STEP, OUTPUT); pinMode(R_DIR, OUTPUT);
   pinMode(L_EN, OUTPUT);   pinMode(R_EN, OUTPUT);
@@ -483,6 +511,7 @@ void loop() {
     BP32.update();
     lerControle();
     cuidarLog();
+    salvarConfig();
   }
 
   // Troca de estado com seguranca: nao inverte em velocidade.

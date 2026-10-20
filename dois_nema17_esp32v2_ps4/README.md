@@ -37,7 +37,7 @@ Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (89% da flash co
 
 1. Ligue o carrinho. Para ver o que acontece, abra o Monitor Serial em 115200.
 2. No controle, segure **SHARE + PS** até a luz piscar rápido.
-3. Conectou: a luz fica **azul** e o controle vibra. Nas próximas vezes, basta apertar **PS**.
+3. Conectou: o controle vibra e a luz acende na **cor do limite de velocidade** (azul = devagar, vermelho = rápido). Nas próximas vezes, basta apertar **PS**.
 
 Se não conectar depois de ter pareado o controle com o PS4/celular: descomente
 `BP32.forgetBluetoothKeys();` no `setup()`, grave, pareie, e comente de novo.
@@ -48,12 +48,26 @@ Se não conectar depois de ter pareado o controle com o PS4/celular: descomente
 |---|---|
 | Analógico **esquerdo** | anda: frente/trás/gira tank, com velocidade **proporcional** ao quanto você empurra |
 | **D-pad** | anda no limite de velocidade (como os botões do app antigo) |
-| **L1 / R1** | diminui / aumenta o limite de velocidade em 10% (substitui o slider). A luz vai de azul (devagar) a vermelho (rápido) |
+| **L1 / R1** | diminui / aumenta o limite de velocidade em 10% (substitui o slider). A luz vai de azul (devagar) a vermelho (rápido). **Fica gravado na flash** (ver abaixo) |
 | Analógico **direito** | move o gimbal. Soltando, ele segura a posição |
 | **R3** ou **Triângulo** | centraliza o gimbal |
 | **X** | STOP (freia na rampa) |
 
 Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho, com rampa.
+
+## Limite de velocidade gravado na flash
+
+O limite escolhido no L1/R1 fica gravado: desligou e ligou de novo, volta no mesmo limite
+(a página e o log mostram `limite carregado da flash: 70%`).
+
+- Grava **2 s depois do último toque** em L1/R1 **e só com o carrinho parado**. Se você mexer
+  andando, ele grava quando parar. O controle dá uma **vibração curtinha** quando gravou.
+- Por que só parado: gravar na flash pausa o ESP32 por alguns milissegundos, o que faria o
+  motor engasgar e atrasaria o Bluetooth.
+- Apertar várias vezes seguidas grava uma vez só (a flash aguenta ~100 mil gravações por
+  posição e a NVS ainda espalha o desgaste, então não é problema no uso normal).
+- Cuidado: se você deixou em 100%, ele liga em 100%. A velocidade continua proporcional ao
+  analógico, mas o D-pad já sai no máximo.
 
 ## Status sem fio (página no navegador)
 
@@ -118,9 +132,9 @@ backtrace de um travamento. Para ver isso sem notebook:
 ## Simulação (sem hardware)
 
 [`simulacao/`](simulacao/) roda este `.ino` **sem modificação** no PC, com Arduino, servos e
-Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (20 cenários: drift,
+Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (21 cenários: drift,
 rampa, troca de direção, X, queda do Bluetooth, reconexão, 2º controle, clone sem dados,
-gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status, reinício por queda de tensão). Rode `./simulacao/rodar.sh` (precisa de g++).
+gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status, reinício por queda de tensão, limite gravado na flash). Rode `./simulacao/rodar.sh` (precisa de g++).
 
 O que ela **não** cobre: parear o BGP 2016 de verdade, o motor perder passo, e o tempo
 real que o `BP32.update()` trava o loop. Para esse último, `./rodar.sh 300` simula 300 µs

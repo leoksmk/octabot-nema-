@@ -16,6 +16,10 @@ Bluepad32Mock BP32;
 WiFiMock WiFi;
 #include "WebServer.h"
 #include "esp_system.h"
+#include "Preferences.h"
+std::map<std::string, int> g_flash;
+int g_gravacoesFlash = 0;
+uint64_t g_ultimaGravacaoUs = 0;
 esp_reset_reason_t g_motivo = ESP_RST_POWERON;
 TelnetPeer g_peer;
 
@@ -119,7 +123,7 @@ int main(int argc, char** argv) {
 
   cenas.push_back({g_us, 2}); std::printf("\n2) Conecta o controle (BGP 2016 simulado)\n");
   pad = new Controller(); Serial.quiet = false; BP32.onC(pad); Serial.quiet = true;
-  check(pad->b == 255 && pad->r == 0, "luz azul ao conectar");
+  check(pad->r == 127 && pad->b == 128, "luz na cor do limite (50%) ao conectar");
   check(pad->rumbles == 1, "vibra ao conectar");
 
   cenas.push_back({g_us, 3}); std::printf("\n3) Drift de clone: analogico parado em (60,-70), 1s\n");
@@ -301,6 +305,46 @@ int main(int argc, char** argv) {
     r = lerTudo();
     check(r.find("ultima coisa antes de cair") == std::string::npos && r.find("BOOT #0 - motivo: LIGOU") != std::string::npos,
           "faltou energia de vez: comeca log limpo");
+    pad = new Controller(); BP32.onC(pad); solta(); rodar(200);
+  }
+
+  cenas.push_back({g_us, 21}); std::printf("\n21) L1/R1 gravam o limite na flash\n");
+  {
+    tempoAteParar(3000); rodar(2500);
+    int base = limitePct, grav0 = g_gravacoesFlash, vib0 = pad->rumbles;
+    if (base > 70) { for (int i = 0; i < 3; i++) toque(BUTTON_SHOULDER_L); rodar(2500); base = limitePct; grav0 = g_gravacoesFlash; vib0 = pad->rumbles; }
+    pad->ay = -512; rodar(300);
+    toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_R);
+    rodar(3000);
+    check(limitePct == base + 20, "R1 x2 andando", fmt("(%.0f%% -> %.0f%%)", base, limitePct));
+    check(g_gravacoesFlash == grav0, "NAO grava com o carrinho andando");
+    solta(); tempoAteParar(3000);
+    uint64_t tParou = g_us; rodar(100);
+    check(g_gravacoesFlash == grav0 + 1 && g_ultimaGravacaoUs >= tParou, "toque foi ha >2s: grava logo que para",
+          fmt("(%.0f ms depois de parar)", (g_ultimaGravacaoUs - tParou) / 1000.0));
+    check(g_gravacoesFlash == grav0 + 1 && g_flash["limite"] == base + 20, "gravou 1 vez depois de parar", fmt("(flash = %.0f%%)", g_flash["limite"]));
+    check(pad->rumbles == vib0 + 1, "vibra pra confirmar");
+    int grav1 = g_gravacoesFlash;
+    uint64_t tToque = 0;
+    for (int i = 0; i < 5; i++) { tToque = g_us; toque(BUTTON_SHOULDER_L); }   // tToque = inicio do ultimo aperto
+    rodar(1400);
+    check(g_gravacoesFlash == grav1, "parado: espera 2s depois do ultimo toque");
+    rodar(1500);
+    check(g_ultimaGravacaoUs - tToque >= 1900000, "gravou ~2s depois do ultimo toque", fmt("(%.0f ms)", (g_ultimaGravacaoUs - tToque) / 1000.0));
+    check(g_gravacoesFlash == grav1 + 1, "5 toques seguidos = 1 gravacao so", fmt("(%.0f gravacoes)", g_gravacoesFlash - grav1));
+    int esperadoFlash = limitePct;
+    // desliga a energia e liga de novo
+    g_motivo = ESP_RST_POWERON; estado = comandado = PARADO; controle = nullptr; limitePct = LIMITE_INICIAL; g_us += 500000;
+    setup();
+    check(limitePct == esperadoFlash, "ligou de novo no limite gravado", fmt("(%.0f%%)", limitePct));
+    pad = new Controller(); BP32.onC(pad);
+    int rEsp = map(esperadoFlash, 0, 100, 0, 255);
+    check(pad->r == rEsp && pad->b == 255 - rEsp, "luz do controle ja na cor do limite gravado");
+    check(g_gravacoesFlash == grav1 + 1, "ligar nao grava nada");
+    g_flash["limite"] = 999; setup();
+    check(limitePct == 100, "valor estranho na flash -> trava em 100", fmt("(%.0f%%)", limitePct));
+    g_flash["limite"] = 55; setup();
+    check(limitePct == 50, "valor fora do degrau -> arredonda (55 -> 50)", fmt("(%.0f%%)", limitePct));
     pad = new Controller(); BP32.onC(pad); solta(); rodar(200);
   }
 

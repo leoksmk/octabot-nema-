@@ -6,7 +6,7 @@ t=[float(r["t"]) for r in rows]
 cen=[l.strip().split(",") for l in open("cenas.csv")]
 nomes={1:"sem controle",2:"conecta",3:"drift",4:"frente 50%",5:"meio analog.",6:"solta",7:"R1 x6",8:"D-pad 100%",
        9:"vira direita",10:"X stop",11:"BT cai",12:"reconecta (ré)",13:"2º controle",14:"clone sem dados",15:"gimbal",
-       16:"L1 → 0%",17:"diagonal",18:"telnet",19:"pagina",20:"reinicio"}
+       16:"L1 → 0%",17:"diagonal",18:"telnet",19:"pagina",20:"reinicio",21:"grava flash"}
 fig,ax=plt.subplots(3,1,figsize=(14,9),sharex=True,gridspec_kw={"height_ratios":[3,1,1.4]})
 sent=[int(r["sentido"]) for r in rows]; sps=[float(r["passos_s"]) for r in rows]
 cores={0:"#999",1:"#2563eb",-1:"#dc2626",2:"#16a34a"}
