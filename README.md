@@ -13,7 +13,7 @@ Código-fonte: [`dois_nema17_esp32.ino`](dois_nema17_esp32.ino)
 
 > **Outras versões:** [`octabot_fase/`](octabot_fase/) (sincronia de fase das pernas) e
 > [`octabot_espnow/`](octabot_espnow/) (controle por inclinação com MPU6050 via ESP-NOW, sem app).
-> [`dois_nema17_esp32v2_ps4/`](dois_nema17_esp32v2_ps4/) (v2 controlada por controle de PS4 via Bluetooth, sem app).
+> [`dois_nema17_esp32v2_ps4/`](dois_nema17_esp32v2_ps4/) (v2 controlada por controle de PS4 via Bluetooth; status sem fio em http://192.168.4.1).
 
 ---
 

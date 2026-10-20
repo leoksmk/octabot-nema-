@@ -17,11 +17,12 @@ class Controller {
   // estado "fisico" do controle (o teste mexe aqui)
   int ax = 0, ay = 0, arx = 0, ary = 0; uint16_t btn = 0; uint8_t dp = 0;
   bool connected = true, newData = false, refused = false;
-  int r = -1, g = -1, b = -1, rumbles = 0;
+  int r = -1, g = -1, b = -1, rumbles = 0; uint8_t bat = 0;  // 0 = clone que nao informa
   bool isConnected() const { return connected; }
   bool hasData() { bool d = newData; newData = false; return d; }   // real: consome o relatorio
   int axisX() const { return ax; } int axisY() const { return ay; }
   int axisRX() const { return arx; } int axisRY() const { return ary; }
+  uint8_t battery() const { return bat; }
   uint16_t buttons() const { return btn; } uint8_t dpad() const { return dp; }
   void setColorLED(uint8_t R, uint8_t G, uint8_t B) { r = R; g = G; b = B; }
   void playDualRumble(int, int, int, int) { rumbles++; }

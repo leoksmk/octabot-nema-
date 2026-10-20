@@ -12,6 +12,7 @@
 #define LOW 0
 #define OUTPUT 1
 #define INPUT 0
+#define PROGMEM
 
 // Relogio virtual (us). O loop do teste avanca isso.
 extern uint64_t g_us;
@@ -42,4 +43,7 @@ extern SerialMock Serial;
 class String : public std::string {
  public:
   String(const char* s = "") : std::string(s) {}
+  long toInt() const { return atol(c_str()); }
+  String& operator+=(char c) { push_back(c); return *this; }
+  String& operator+=(const char* s) { append(s); return *this; }
 };

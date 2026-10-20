@@ -14,6 +14,7 @@ SerialMock Serial;
 Bluepad32Mock BP32;
 #include "WiFi.h"
 WiFiMock WiFi;
+#include "WebServer.h"
 TelnetPeer g_peer;
 
 #ifndef SKETCH
@@ -230,7 +231,7 @@ int main(int argc, char** argv) {
   pad->dp = DPAD_UP; rodar(1200); solta(); tempoAteParar(3000); rodar(600);
   auto& rx = g_peer.recebido;
   auto conta = [&](const std::string& s) { size_t n = 0, p = 0; while ((p = rx.find(s, p)) != std::string::npos) { n++; p += s.size(); } return n; };
-  check(conta("comandos: s = status") == 1, "mensagem de ajuda ao conectar");
+  check(conta("telnet: s = status") == 1, "mensagem de ajuda ao conectar");
   check(conta("estado: FRENTE") == 1 && conta("estado: PARADO") == 1, "eventos de estado no telnet");
   check(conta(" passos/s limite=") >= 3, "linha de status periodica", fmt("(%.0f linhas)", conta(" passos/s limite=")));
   std::printf("      exemplo: %s", rx.substr(rx.find("FRENTE cmd=")).substr(0, rx.substr(rx.find("FRENTE cmd=")).find('\n') + 1).c_str());
@@ -243,6 +244,34 @@ int main(int argc, char** argv) {
   check(rx.size() == tam && bytesPerdidos > 0, "WiFi engasgado: descarta log", fmt("(%.0f bytes perdidos)", bytesPerdidos));
   check(std::fabs(taxa(500) - esperado(50)) < esperado(50) * 0.05, "e os motores continuam no ritmo", fmt("(%.0f passos/s, %.0f passos)", taxa(500), passosL.size() - passos0));
   g_peer.espacoBuffer = 5744; solta(); tempoAteParar(3000);
+
+  cenas.push_back({g_us, 19}); std::printf("\n19) Pagina de status (http://192.168.4.1)\n");
+  {
+    std::string pag = web.get("/");
+    check(web.codigo == 200 && pag.find("/dados?p=") != std::string::npos, "pagina abre", fmt("(%.0f bytes)", pag.size()));
+    FILE* f = std::fopen("pagina.html", "w"); std::fputs(pag.c_str(), f); std::fclose(f);
+    std::string r = web.get("/dados", "p", "0");
+    check(r.rfind("0 ", 0) != 0 && r.find("\"est\":\"PARADO\"") != std::string::npos, "status em JSON");
+    check(r.find("Controle conectado") != std::string::npos, "historico desde o boot (antes de abrir a pagina)");
+    check(r.find(" passos/s limite=") == std::string::npos, "status periodico nao enche o historico");
+    // grava uma sequencia de respostas como o navegador faria (a cada 500ms) andando
+    FILE* q = std::fopen("respostas.txt", "w");
+    std::string pos = "0"; int n = 0; size_t maior = 0;
+    auto poll = [&]() { std::string x = web.get("/dados", "p", pos); maior = std::max(maior, x.size());
+                        pos = x.substr(0, x.find(' ')); std::fprintf(q, "%zu\n%s", x.size(), x.c_str()); n++; };
+    poll();
+    pad->ay = -512; pad->arx = 300; for (int i = 0; i < 4; i++) { rodar(500); poll(); }
+    pad->arx = 0; toque(BUTTON_SHOULDER_R); toque(BUTTON_SHOULDER_R); for (int i = 0; i < 3; i++) { rodar(500); poll(); }
+    std::fclose(q);
+    check(maior <= 1900, "resposta curta (max 1500 de log)", fmt("(maior %.0f bytes)", maior));
+    std::string atual = web.get("/dados", "p", pos);
+    check(atual.find("\"est\":\"FRENTE\"") != std::string::npos && atual.find("\"lim\":70") != std::string::npos, "painel acompanha (FRENTE, limite 70)");
+    check(web.get("/dados", "p", "999999").find(" 1\n") != std::string::npos, "detecta reboot (posicao maior que o log)");
+    for (int i = 0; i < 200; i++) logMsg("enchendo o historico linha %d .........................\n", i);
+    std::string velho = web.get("/dados", "p", "10");
+    check(velho.find(" 1\n") != std::string::npos, "historico estourado: recomeca do mais antigo");
+    solta(); tempoAteParar(3000); for (int i = 0; i < 2; i++) toque(BUTTON_SHOULDER_L);
+  }
 
   std::printf("\nGeral\n");
   check(dessincronizados == 0, "rodas sempre no mesmo passo (pernas em fase)", fmt("(%g passos fora)", dessincronizados));

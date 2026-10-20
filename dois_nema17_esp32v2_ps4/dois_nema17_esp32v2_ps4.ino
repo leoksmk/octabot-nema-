@@ -26,12 +26,13 @@
  *   X (cruz)            -> STOP (freia na rampa ate o controle soltar tudo).
  *   Soltou tudo / controle desligou / caiu o Bluetooth -> o carrinho para sozinho.
  *
- * LOG SEM FIO (Telnet), alem do Monitor Serial:
- *   Conecte no WiFi "Octabot-Log" (senha 12345678) e rode:  telnet 192.168.4.1
- *   (celular: app "Serial WiFi Terminal" / "JuiceSSH" em modo telnet, porta 23)
- *   No telnet: "s" liga/desliga a linha de status (2x por segundo), "h" ajuda.
+ * STATUS SEM FIO (o que sairia no Monitor Serial, mas sem cabo):
+ *   Conecte no WiFi "Octabot-Log" (senha 12345678) e abra no navegador:  http://192.168.4.1
+ *   -> painel ao vivo (estado, velocidade, limite, controle, bateria, gimbal) + log desde o boot.
+ *   So LEITURA: o carrinho continua sendo controlado so pelo controle de PS4.
+ *   Tambem da pra ler por telnet:  telnet 192.168.4.1  ("s" liga/desliga status, "h" ajuda).
  *   O WiFi divide o radio com o Bluetooth do controle. Se o controle ficar lento ou
- *   cair, desligue o Telnet: TELNET_LOG = false.
+ *   cair, desligue: LOG_WIFI = false (fica so o Monitor Serial).
  *
  * Esta placa (Mainboard Future Makers 2k26) ja resolve por hardware:
  *   - VMOT de cada driver -> 12V, com capacitor (C3/C4)
@@ -44,6 +45,7 @@
 
 #include <Bluepad32.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <stdarg.h>
 #include <ESP32Servo.h>   // instale pelo Library Manager: "ESP32Servo" (Kevin Harrington)
 
@@ -112,29 +114,41 @@ unsigned long ultimoDado = 0;
 ControllerPtr controle = nullptr;   // so aceitamos UM controle
 uint16_t botoesAntes = 0;
 
-// ---------- Log (Serial + Telnet) ----------
-const bool TELNET_LOG = true;          // false = sem WiFi (so Monitor Serial)
+// ---------- Log (Serial + pagina web + Telnet) ----------
+const bool LOG_WIFI = true;            // false = sem WiFi (so Monitor Serial)
 const char* AP_SSID = "Octabot-Log";
 const char* AP_PASS = "12345678";      // minimo 8 caracteres
+WebServer web(80);
 WiFiServer telnetServer(23);
 WiFiClient telnet;
-bool statusLigado = true;              // linha de status periodica ("s" no telnet alterna)
-unsigned long bytesPerdidos = 0;       // log descartado porque o WiFi nao deu conta
+bool statusLigado = true;              // linha de status periodica no Serial/telnet ("s" alterna)
+unsigned long bytesPerdidos = 0;       // log de telnet descartado porque o WiFi nao deu conta
 
-// printf para o Serial e para o telnet. Nunca espera o WiFi: se o buffer do telnet
-// estiver cheio, a mensagem e descartada (o loop dos passos nao pode travar).
-void logMsg(const char* fmt, ...) {
-  char buf[200];
-  va_list ap; va_start(ap, fmt);
-  int n = vsnprintf(buf, sizeof buf, fmt, ap);
-  va_end(ap);
-  if (n <= 0) return;
-  if (n >= (int)sizeof buf) n = sizeof buf - 1;
+// Historico do log na RAM (a pagina mostra desde o boot, mesmo abrindo depois).
+const size_t LOG_TAM = 4096;
+char logBuf[LOG_TAM];
+uint32_t logTotal = 0;                 // bytes ja escritos desde o boot (posicao absoluta)
+
+// Manda texto para o Serial e o telnet; 'guardar' = tambem no historico da pagina.
+// Nunca espera o WiFi: se o buffer do telnet estiver cheio, descarta (os passos nao podem travar).
+void saida(const char* buf, int n, bool guardar) {
   Serial.write((const uint8_t*)buf, n);
-  if (TELNET_LOG && telnet && telnet.connected()) {
+  if (guardar) for (int i = 0; i < n; i++) logBuf[(logTotal++) % LOG_TAM] = buf[i];
+  if (LOG_WIFI && telnet && telnet.connected()) {
     if (telnet.availableForWrite() >= n) telnet.write((const uint8_t*)buf, n);
     else bytesPerdidos += n;
   }
+}
+
+// printf de eventos: Serial + telnet + historico da pagina, com o tempo desde o boot.
+void logMsg(const char* fmt, ...) {
+  char buf[200];
+  int n = snprintf(buf, sizeof buf, "[%lu.%03lus] ", millis() / 1000, millis() % 1000);
+  va_list ap; va_start(ap, fmt);
+  n += vsnprintf(buf + n, sizeof buf - n, fmt, ap);
+  va_end(ap);
+  if (n >= (int)sizeof buf) n = sizeof buf - 1;
+  saida(buf, n, true);
 }
 
 // ---------- Bluetooth ----------
@@ -240,18 +254,96 @@ void lerControle() {
   }
 }
 
-// ---------- Telnet ----------
+// ---------- Status (pagina web + telnet) ----------
 const char* NOME_ESTADO[] = {"PARADO", "FRENTE", "TRAS", "ESQUERDA", "DIREITA"};
 
-void ajudaTelnet() {
-  logMsg("Octabot v2 PS4 - comandos: s = status liga/desliga, h = ajuda\n");
+unsigned long passosPorSeg() { return (estado == PARADO) ? 0 : 1000000UL / (2 * intervaloAtual); }
+// Bateria do controle em %; -1 = o controle nao informa (comum em clone).
+int bateriaPct() { return (controle && controle->battery()) ? controle->battery() * 100 / 255 : -1; }
+
+const char PAGINA[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="pt-br"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Octabot status</title><style>
+:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#111;color:#eee;padding:12px}
+h1{font-size:1rem;margin:0 0 10px;opacity:.75}#on{font-size:.75rem;padding:2px 8px;border-radius:9px;margin-left:6px}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.c{background:#1c1c1c;border:1px solid #2c2c2c;border-radius:10px;padding:8px 10px}
+.c b{display:block;font-size:.7rem;opacity:.55;font-weight:500}.c span{font-size:1.25rem;font-variant-numeric:tabular-nums}
+.bar{height:6px;background:#333;border-radius:3px;margin-top:5px}.bar i{display:block;height:100%;border-radius:3px;background:#3b82f6}
+#bt{font-size:.95rem}
+pre{background:#0a0a0a;border:1px solid #2c2c2c;border-radius:10px;padding:8px;height:45vh;overflow:auto;font-size:.75rem;white-space:pre-wrap;margin:10px 0 0}
+</style></head><body>
+<h1>Octabot v2 PS4 <span id="on">...</span></h1>
+<div class="g">
+<div class="c"><b>Estado</b><span id="est">-</span></div>
+<div class="c"><b>Velocidade</b><span id="vel">-</span></div>
+<div class="c"><b>Limite (L1/R1)</b><span id="lim">-</span><div class="bar"><i id="limb"></i></div></div>
+<div class="c"><b>Controle</b><span id="bt">-</span></div>
+<div class="c"><b>Bateria do controle</b><span id="bat">-</span></div>
+<div class="c"><b>Gimbal pan / tilt</b><span id="gim">-</span></div>
+<div class="c"><b>Analogico esq. X / Y</b><span id="ax">-</span></div>
+<div class="c"><b>Ligado ha</b><span id="up">-</span></div>
+</div>
+<pre id="log"></pre>
+<script>
+let pos=0;const $=i=>document.getElementById(i),L=$('log');
+function on(ok){$('on').textContent=ok?'ao vivo':'sem conexao';$('on').style.background=ok?'#14532d':'#7f1d1d';}
+async function tick(){
+  try{
+    const r=await fetch('/dados?p='+pos,{cache:'no-store'});const t=await r.text();
+    const a=t.indexOf('\n'),b=t.indexOf('\n',a+1);const h=t.slice(0,a).split(' ');const s=JSON.parse(t.slice(a+1,b));
+    if(h[1]==='1')L.textContent='';pos=+h[0];
+    const fim=L.scrollTop+L.clientHeight>=L.scrollHeight-20;L.textContent+=t.slice(b+1);if(fim)L.scrollTop=L.scrollHeight;
+    $('est').textContent=s.est+(s.cmd!==s.est?' > '+s.cmd:'');
+    $('vel').textContent=s.ps+' passos/s';$('lim').textContent=s.lim+'%';$('limb').style.width=s.lim+'%';
+    $('bt').textContent=s.bt?s.nome:'desconectado';$('bat').textContent=s.bat<0?'n/d':s.bat+'%';
+    $('gim').textContent=s.pan+' / '+s.tilt;$('ax').textContent=s.lx+' / '+s.ly;
+    $('up').textContent=Math.floor(s.up/60)+'min '+(s.up%60)+'s';on(true);
+  }catch(e){on(false);}
+  setTimeout(tick,500);
+}
+tick();
+</script></body></html>)HTML";
+
+void webRaiz() { web.send_P(200, "text/html", PAGINA); }
+
+// /dados?p=N -> "pos reset\n{status json}\nlog novo desde N"
+// Manda no maximo 1500 bytes de log por vez (resposta curta = trava menos o loop dos passos).
+void webDados() {
+  uint32_t desde = web.arg("p").toInt();
+  bool reset = false;
+  uint32_t maisAntigo = logTotal > LOG_TAM ? logTotal - LOG_TAM : 0;
+  if (desde > logTotal || desde < maisAntigo) { desde = maisAntigo; reset = true; }  // reboot ou ficou pra tras
+  uint32_t ate = min(logTotal, desde + 1500);
+
+  char cab[360];
+  int n = snprintf(cab, sizeof cab,
+    "%lu %d\n{\"est\":\"%s\",\"cmd\":\"%s\",\"ps\":%lu,\"lim\":%d,\"bt\":%d,\"nome\":\"%s\",\"bat\":%d,"
+    "\"pan\":%d,\"tilt\":%d,\"lx\":%d,\"ly\":%d,\"up\":%lu}\n",
+    (unsigned long)ate, reset ? 1 : 0, NOME_ESTADO[estado], NOME_ESTADO[comandado], passosPorSeg(), limitePct,
+    controle ? 1 : 0, controle ? controle->getModelName().c_str() : "", bateriaPct(),
+    (int)panAng, (int)tiltAng, controle ? (int)controle->axisX() : 0, controle ? (int)controle->axisY() : 0,
+    millis() / 1000);
+  String r;
+  r.reserve(n + (ate - desde));
+  r += cab;
+  for (uint32_t i = desde; i < ate; i++) {
+    char c = logBuf[i % LOG_TAM];
+    r += c;
+  }
+  web.send(200, "text/plain", r);
 }
 
-// Aceita cliente novo, le comandos, imprime eventos e status. Chamado a cada 5ms.
+void ajudaTelnet() {
+  logMsg("Octabot v2 PS4 - telnet: s = status liga/desliga, h = ajuda\n");
+}
+
+// Atende a pagina e o telnet, imprime eventos e status. Chamado a cada 5ms.
 void cuidarLog() {
-  static unsigned long ultimoTelnet = 0;
-  if (TELNET_LOG && millis() - ultimoTelnet >= 50) {   // rede a cada 50ms basta
-    ultimoTelnet = millis();
+  static unsigned long ultimaRede = 0;
+  if (LOG_WIFI && millis() - ultimaRede >= 50) {   // rede a cada 50ms basta
+    ultimaRede = millis();
+    web.handleClient();
     WiFiClient novo = telnetServer.available();
     if (novo) {                                   // novo cliente substitui o antigo
       if (telnet) telnet.stop();
@@ -269,18 +361,20 @@ void cuidarLog() {
   // Eventos: troca de estado e de limite.
   static Movimento estadoLogado = PARADO;
   static int limiteLogado = LIMITE_INICIAL;
-  if (estado != estadoLogado) { logMsg("[%lu ms] estado: %s\n", millis(), NOME_ESTADO[estado]); estadoLogado = estado; }
-  if (limitePct != limiteLogado) { logMsg("[%lu ms] limite: %d%%\n", millis(), limitePct); limiteLogado = limitePct; }
+  if (estado != estadoLogado) { logMsg("estado: %s\n", NOME_ESTADO[estado]); estadoLogado = estado; }
+  if (limitePct != limiteLogado) { logMsg("limite: %d%%\n", limitePct); limiteLogado = limitePct; }
 
-  // Status periodico.
+  // Status periodico no Serial/telnet (a pagina tem o painel, entao nao vai pro historico).
   static unsigned long ultimoStatus = 0;
   if (statusLigado && millis() - ultimoStatus >= 500) {
     ultimoStatus = millis();
-    unsigned long ps = (estado == PARADO) ? 0 : 1000000UL / (2 * intervaloAtual);
-    logMsg("%s cmd=%s %lu passos/s limite=%d%% gimbal=%d/%d LX=%d LY=%d BT=%s perdidos=%lu\n",
-           NOME_ESTADO[estado], NOME_ESTADO[comandado], ps, limitePct, (int)panAng, (int)tiltAng,
-           controle ? controle->axisX() : 0, controle ? controle->axisY() : 0,
-           controle ? "ok" : "--", bytesPerdidos);
+    char buf[200];
+    int n = snprintf(buf, sizeof buf, "%s cmd=%s %lu passos/s limite=%d%% gimbal=%d/%d LX=%d LY=%d BT=%s bat=%d perdidos=%lu\n",
+             NOME_ESTADO[estado], NOME_ESTADO[comandado], passosPorSeg(), limitePct, (int)panAng, (int)tiltAng,
+             controle ? (int)controle->axisX() : 0, controle ? (int)controle->axisY() : 0,
+             controle ? "ok" : "--", bateriaPct(), bytesPerdidos);
+    if (n >= (int)sizeof buf) n = sizeof buf - 1;
+    saida(buf, n, false);
   }
 }
 
@@ -328,12 +422,15 @@ void setup() {
   BP32.enableVirtualDevice(false);   // touchpad do DS4 nao vira "mouse"
   // Se o controle nao reconectar depois de parear com outro aparelho, descomente 1 vez:
   // BP32.forgetBluetoothKeys();
-  if (TELNET_LOG) {
+  if (LOG_WIFI) {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASS);
+    web.on("/", webRaiz);
+    web.on("/dados", webDados);
+    web.begin();
     telnetServer.begin();
     telnetServer.setNoDelay(true);
-    logMsg("Telnet: WiFi \"%s\" -> telnet %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+    logMsg("Status: WiFi \"%s\" -> http://%s (ou telnet)\n", AP_SSID, WiFi.softAPIP().toString().c_str());
   }
   logMsg("Bluepad32 %s - segure SHARE + PS no controle para parear.\n", BP32.firmwareVersion());
 }

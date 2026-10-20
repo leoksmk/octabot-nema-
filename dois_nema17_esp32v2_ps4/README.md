@@ -30,7 +30,7 @@ tem, mas ESP32-C3/S3 **não** servem.
    placa selecionada seja a do passo 3; mesmo assim, desinstale para evitar confusão.
 5. Grave o código.
 
-Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (86% da flash com Telnet, 55% sem).
+Testado compilando com esp32_bluepad32 4.1.0 + ESP32Servo 3.2.1 (89% da flash com o status WiFi).
 **Não foi testado no hardware.**
 
 ## Parear
@@ -55,28 +55,30 @@ Se não conectar depois de ter pareado o controle com o PS4/celular: descomente
 
 Soltou tudo, o controle desligou ou caiu o Bluetooth: o carrinho para sozinho, com rampa.
 
-## Log sem fio (Telnet)
+## Status sem fio (página no navegador)
 
-Além do Monitor Serial, o mesmo log sai por **Telnet**:
+Para ver o que está acontecendo sem cabo USB (o mesmo que sairia no Monitor Serial):
 
-1. Conecte no WiFi **`Octabot-Log`** (senha `12345678`).
-2. Abra `telnet 192.168.4.1` (porta 23). No Windows, ative "Cliente Telnet" nos recursos do
-   Windows ou use o PuTTY em modo Telnet. No celular, use um app de terminal com Telnet.
-3. Aparecem a conexão do controle (nome/VID/PID), as trocas de estado e de limite, e uma linha de
-   status 2x por segundo:
-   ```
-   FRENTE cmd=FRENTE 377 passos/s limite=50% gimbal=90/90 LX=0 LY=-512 BT=ok perdidos=0
-   ```
-   Digite `s` para ligar/desligar o status e `h` para ajuda.
+1. Conecte o celular/PC no WiFi **`Octabot-Log`** (senha `12345678`).
+2. Abra **`http://192.168.4.1`** no navegador.
 
-Detalhes:
-- Só um cliente por vez; um novo derruba o anterior.
-- O log **nunca espera o WiFi**: se a rede engasgar, a mensagem é descartada (`perdidos=`)
-  para não atrasar os passos do motor.
+A página mostra, ao vivo (atualiza 2x por segundo): estado e comando, passos/s, limite,
+controle conectado, bateria do controle (`n/d` se o clone não informar), gimbal, analógico
+esquerdo e tempo ligado. Embaixo vem o **log desde o boot** (conexão do controle com
+nome/VID/PID, trocas de estado e de limite), mesmo que você abra a página depois.
+
+- É **só leitura**: o carrinho continua sendo controlado só pelo controle de PS4.
+- O histórico guarda os últimos 4 KB de log na RAM (umas 100 linhas).
+- Também dá para ler por Telnet (`telnet 192.168.4.1`), que inclui uma linha de status
+  periódica (`s` liga/desliga, `h` ajuda).
+- O log **nunca espera o WiFi**. Cada atualização da página é curta (no máximo ~1,5 KB) e
+  a rede só é atendida a cada 50 ms, mas cada resposta ainda segura o loop por alguns ms.
+  Não medi isso no ESP32; se o motor engasgar só com a página aberta, feche a página.
 - **WiFi e Bluetooth dividem o mesmo rádio do ESP32.** O pacote Bluepad32 tem a convivência
   ativada, mas o controle pode ficar com mais latência. Se o controle travar ou cair, coloque
-  `TELNET_LOG = false` (o WiFi nem liga).
-- O que acontece antes de você conectar o Telnet só aparece no Monitor Serial.
+  `LOG_WIFI = false` (o WiFi nem liga e fica só o Monitor Serial).
+- O firmware fica com 89% da flash. Se crescer mais, use **Ferramentas > Partition Scheme >
+  Huge APP**.
 
 ## Ajustes no topo do código
 
@@ -97,9 +99,9 @@ Detalhes:
 ## Simulação (sem hardware)
 
 [`simulacao/`](simulacao/) roda este `.ino` **sem modificação** no PC, com Arduino, servos e
-Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (18 cenários: drift,
+Bluepad32 trocados por versões falsas e um controle PS4 roteirizado (19 cenários: drift,
 rampa, troca de direção, X, queda do Bluetooth, reconexão, 2º controle, clone sem dados,
-gimbal, L1/R1, diagonal, Telnet com WiFi engasgado). Rode `./simulacao/rodar.sh` (precisa de g++).
+gimbal, L1/R1, diagonal, Telnet com WiFi engasgado, página de status). Rode `./simulacao/rodar.sh` (precisa de g++).
 
 O que ela **não** cobre: parear o BGP 2016 de verdade, o motor perder passo, e o tempo
 real que o `BP32.update()` trava o loop. Para esse último, `./rodar.sh 300` simula 300 µs
